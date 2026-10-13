@@ -67,6 +67,10 @@ struct SyncPlan: Sendable, Equatable {
 
     var fits: Bool { shortfallBytes == 0 }
     var playlistCount: Int
+    /// Source file path to the tagged identity written to the iPod. M3U entries
+    /// name files by path, while the library may display a tagged album title
+    /// that differs from the containing folder.
+    var playlistKeysByPath: [String: TrackKey]
     /// Per-playlist diff against what's on the iPod now, sorted added →
     /// removed → modified → unchanged.
     var playlistChanges: [PlaylistChange] = []

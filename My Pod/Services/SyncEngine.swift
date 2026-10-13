@@ -216,8 +216,12 @@ final class SyncEngine {
             return lhs.library.trackNumber < rhs.library.trackNumber
         }
 
-        // 4. Diff against the iPod by (artist, album, title) key.
+        // 4. Diff against the iPod using the shared TrackKey identity.
         let plannedKeys = Set(planned.map { TrackKey(plan: $0) })
+        let playlistKeysByPath = Dictionary(
+            planned.map { ($0.library.url.standardizedFileURL.path.precomposedStringWithCanonicalMapping, TrackKey(plan: $0)) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let iPodByKey: [TrackKey: TrackInfo] = Dictionary(
             iPodTracks.map { (TrackKey(ipod: $0), $0) },
             uniquingKeysWith: { a, _ in a }
@@ -246,7 +250,9 @@ final class SyncEngine {
             playlists: playlists,
             devicePlaylists: devicePlaylists,
             iPodTracks: iPodTracks,
-            postSyncKeys: plannedKeys
+            postSyncKeys: plannedKeys,
+            libraryRoot: libraryRoot,
+            keysByPath: playlistKeysByPath
         )
 
         // 8. Cover art that changed after this device last received it.
@@ -269,6 +275,7 @@ final class SyncEngine {
             removedBytes: removedBytes,
             freeBytesBefore: freeBytes,
             playlistCount: playlists.count,
+            playlistKeysByPath: playlistKeysByPath,
             playlistChanges: playlistChanges,
             artworkUpdates: artworkUpdates
         )
@@ -284,7 +291,9 @@ final class SyncEngine {
         playlists: [Playlist],
         devicePlaylists: [DevicePlaylist],
         iPodTracks: [TrackInfo],
-        postSyncKeys: Set<TrackKey>
+        postSyncKeys: Set<TrackKey>,
+        libraryRoot: URL,
+        keysByPath: [String: TrackKey]
     ) -> [PlaylistChange] {
         var keysByTrackID: [UInt32: TrackKey] = [:]
         keysByTrackID.reserveCapacity(iPodTracks.count)
@@ -305,7 +314,7 @@ final class SyncEngine {
             var resolved: [TrackKey] = []
             var unresolved = 0
             for entry in playlist.entries {
-                guard let key = playlistEntryKey(entry: entry), postSyncKeys.contains(key) else {
+                guard let key = playlistEntryKey(entry: entry, libraryRoot: libraryRoot, keysByPath: keysByPath), postSyncKeys.contains(key) else {
                     unresolved += 1
                     continue
                 }
@@ -575,6 +584,8 @@ final class SyncEngine {
         let playlistOutcome = await syncPlaylists(
             playlists: playlists,
             changes: plan.playlistChanges,
+            libraryRoot: libraryRoot,
+            keysByPath: plan.playlistKeysByPath,
             device: device
         )
 
@@ -669,6 +680,8 @@ final class SyncEngine {
     private func syncPlaylists(
         playlists: [Playlist],
         changes: [PlaylistChange],
+        libraryRoot: URL,
+        keysByPath: [String: TrackKey],
         device: IPodDevice
     ) async -> PlaylistSyncOutcome {
         let total = playlists.count
@@ -723,7 +736,7 @@ final class SyncEngine {
                 var unmatched = 0
                 var distinct: Set<Int> = []
                 for entry in playlist.entries {
-                    guard let key = Self.playlistEntryKey(entry: entry) else {
+                    guard let key = Self.playlistEntryKey(entry: entry, libraryRoot: libraryRoot, keysByPath: keysByPath) else {
                         unmatched += 1
                         continue
                     }
@@ -779,16 +792,19 @@ final class SyncEngine {
         }
     }
 
-    /// Parse an M3U entry path ("Artist/Album/01 - Title.flac") into a TrackKey
-    /// that matches how iPod tracks are keyed.
-    private static func playlistEntryKey(entry: PlaylistEntry) -> TrackKey? {
-        let parts = entry.path.split(separator: "/")
-        guard parts.count >= 3 else { return nil }
-        let artist = String(parts[parts.count - 3])
-        let album = String(parts[parts.count - 2])
-        let basename = (String(parts[parts.count - 1]) as NSString).deletingPathExtension
-        let title = LibraryScanner.parseFilename(basename).1
-        return TrackKey(artist: artist, album: album, title: title)
+    /// Resolve the path in an M3U entry to the scanned track. Parsing the album
+    /// from that path would disagree with an embedded album title such as
+    /// "The King of Limbs" inside a "2011 - The King of Limbs" folder.
+    private static func playlistEntryKey(
+        entry: PlaylistEntry,
+        libraryRoot: URL,
+        keysByPath: [String: TrackKey]
+    ) -> TrackKey? {
+        let path = entry.resolvedURL(libraryRoot: libraryRoot).standardizedFileURL.path
+        if let key = keysByPath[path.precomposedStringWithCanonicalMapping] { return key }
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return keysByPath[String(cString: resolved).precomposedStringWithCanonicalMapping]
     }
 
 }

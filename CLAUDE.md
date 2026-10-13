@@ -252,6 +252,10 @@ The iPod database stores no source file paths, so library↔device matching is o
 diff, the Music tab's "new music" dots, and playlist entry resolution — they must agree or the three
 features contradict each other.
 
+M3U entries resolve through their source file paths in the scanned sync plan, then use that track's
+`TrackKey`. The path may name a folder differently from the album displayed in the library; parsing
+artist, album, and title back out of the M3U path would then resolve the wrong identity.
+
 macOS hands back filesystem strings in NFD; the iPod can't render combining marks. Strings are
 therefore NFC-normalized at the C boundary in `IPodDevice.addTrack`/`createPlaylist` (file paths are
 deliberately *not* normalized — the filesystem wants NFD).
