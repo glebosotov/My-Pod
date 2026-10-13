@@ -473,5 +473,7 @@ matter. It also gets no README or CLAUDE.md of its own.
   one returns the album at score 100. Cover Art Archive candidates are probed with a HEAD before
   being offered, because nothing in the MusicBrainz response says whether art exists and most
   releases have none — measured at two dead tiles per live one.
-- Library layout is Plex-style `Root/Artist/Album/Track`; track number and title are parsed from the
-  filename by `LibraryScanner.parseFilename`, which mirrors the C-side `parse_track_filename`.
+- Library layout is Plex-style `Root/Artist/Album/Track`. Artist comes from the directory, while
+  album comes from matching embedded tags in up to two playable files (folder name if missing or
+  conflicting). Track number and title are parsed from the filename by
+  `LibraryScanner.parseFilename`, which mirrors the C-side `parse_track_filename`.

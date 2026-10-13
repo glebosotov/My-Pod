@@ -14,6 +14,17 @@ struct AudioFileProperties: Sendable, Equatable {
 /// Stateless helper. AVAsset reads cheaply — just the format atoms — so this is
 /// fast enough to run synchronously per-track during a sync.
 enum AudioMetadataReader {
+    /// Read only the album tag. The scanner samples at most two files per
+    /// folder; opening every asset during a library scan would be expensive.
+    nonisolated static func albumName(_ url: URL) async -> String? {
+        let asset = AVURLAsset(url: url)
+        guard let items = try? await asset.load(.commonMetadata),
+              let item = items.first(where: { $0.commonKey == .commonKeyAlbumName }),
+              let name = try? await item.load(.stringValue)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return nil }
+        return name
+    }
+
     static func read(_ url: URL) async -> AudioFileProperties {
         let asset = AVURLAsset(url: url)
 

@@ -1,8 +1,11 @@
 import Foundation
 
 /// Walks a Plex-structured root (`Root/<Artist>/<Album>/<Track>`), groups files
-/// into a `MusicLibrary`. Title and track number are parsed from filenames the
-/// same way `ipod-sync.c` does it. `nonisolated` because scanning runs on a
+/// into a `MusicLibrary`. Album uses the embedded tag when up to two sampled
+/// tracks agree; artist stays with the directory, and title/track number stay with the
+/// filename. This is a deliberate first step toward tag-based metadata; moving
+/// the remaining fields would also need a consistent identity and playlist
+/// migration. `nonisolated` because scanning runs on a
 /// detached background task — overrides the project-wide MainActor default.
 nonisolated enum LibraryScanner {
     /// Takes no conversion ceiling. The scan records what each file *is*, and
@@ -11,11 +14,11 @@ nonisolated enum LibraryScanner {
     /// changing a quality setting no longer means walking the library again.
     static func scan(root: URL) async -> MusicLibrary {
         await Task.detached(priority: .userInitiated) {
-            scanSync(root: root)
+            await scanSync(root: root)
         }.value
     }
 
-    private static func scanSync(root: URL) -> MusicLibrary {
+    private static func scanSync(root: URL) async -> MusicLibrary {
         let fm = FileManager.default
         var artists: [LibraryArtist] = []
         var totalTracks = 0
@@ -41,11 +44,11 @@ nonisolated enum LibraryScanner {
             var albums: [LibraryAlbum] = []
             for albumURL in albumDirs.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
                 guard isDirectory(albumURL), !shouldSkip(albumURL) else { continue }
-                let tracks = scanAlbum(albumURL: albumURL, artist: artistName)
+                let (albumName, tracks) = await scanAlbum(albumURL: albumURL, artist: artistName)
                 guard !tracks.isEmpty else { continue }
                 albums.append(LibraryAlbum(
                     artist: artistName,
-                    name: albumURL.lastPathComponent,
+                    name: albumName,
                     directory: albumURL,
                     createdAt: creationDate(albumURL),
                     tracks: tracks
@@ -61,15 +64,19 @@ nonisolated enum LibraryScanner {
         return MusicLibrary(root: root, artists: artists, totalTracks: totalTracks, scannedAt: Date())
     }
 
-    private static func scanAlbum(albumURL: URL, artist: String) -> [LibraryTrack] {
+    private static func scanAlbum(albumURL: URL, artist: String) async -> (String, [LibraryTrack]) {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(
             at: albumURL,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
-        ) else { return [] }
+        ) else { return (albumURL.lastPathComponent, []) }
 
-        let albumName = albumURL.lastPathComponent
+        let folderName = albumURL.lastPathComponent
+        let albumName = await embeddedAlbumName(in: files) ?? folderName
+        if albumName != folderName {
+            Log.library.debug("album name from tag: \(folderName) → \(albumName)")
+        }
         var tracks: [LibraryTrack] = []
         for fileURL in files {
             let ext = fileURL.pathExtension
@@ -125,7 +132,26 @@ nonisolated enum LibraryScanner {
                 return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
             }
         }
-        return tracks
+        return (albumName, tracks)
+    }
+
+    /// Sample the first two playable files in filename order. Their album tags
+    /// must agree before one name replaces the folder name; a missing or
+    /// conflicting tag falls back to the folder. Single-track albums need only
+    /// their one tag. This avoids opening every file during a library scan.
+    private static func embeddedAlbumName(in files: [URL]) async -> String? {
+        let sample = files.filter { AudioFormat.canSync($0.pathExtension) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .prefix(2)
+        guard let first = sample.first,
+              let name = await AudioMetadataReader.albumName(first) else { return nil }
+        if sample.count == 2 {
+            guard let second = await AudioMetadataReader.albumName(sample[sample.index(after: sample.startIndex)]),
+                  name.precomposedStringWithCanonicalMapping == second.precomposedStringWithCanonicalMapping else {
+                return nil
+            }
+        }
+        return name
     }
 
     /// Mirrors the regex from ipod-sync.c:

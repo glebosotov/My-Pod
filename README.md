@@ -9,7 +9,7 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 ## Features
 
 - **Automatic device detection** — the iPod is picked up as soon as it mounts; no pairing or setup.
-- **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Sync is a two-way mirror: checked music is added, unchecked music is removed.
+- **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Album names come from matching embedded tags in sampled tracks when available, with the folder name as a fallback. Sync is a two-way mirror: checked music is added, unchecked music is removed.
 - **Manual mode** — an iPod can be managed by hand instead of mirrored, the way iTunes' *Manually manage music* did. Add and remove tracks yourself in the Manual tab and that iPod never syncs with your library, so nothing is removed behind your back. It's a per-iPod choice, so one iPod can mirror your library while another is curated by hand.
 - **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar.
 - **Selection details** — click an artist, album or track and the panel beside the library tells you what it is: cover art, formats, sizes on disk and on the iPod, what's been converted, and what's already on the device. Shift-click to roll several together.
@@ -162,7 +162,7 @@ Swift talks to libgpod through `core/ipod-api/ipod-api.c`, a small C wrapper tha
 
 ## How it works
 
-**Library layout.** Music is read from a Plex-style tree — `Root/Artist/Album/Track`. Track numbers and titles are parsed from filenames.
+**Library layout.** Music is read from a Plex-style tree — `Root/Artist/Album/Track`. The artist comes from its folder; the album name comes from matching embedded tags in up to two tracks, falling back to its folder name. Track numbers and titles are parsed from filenames.
 
 **What syncs.** General ▸ Library offers the same two choices iTunes did: *Entire music library*, or *Selected playlists, artists and albums*. In the second mode the checkboxes in the Music and Playlists tabs decide what goes, and a checked playlist also selects the tracks it points at — so checking one playlist and nothing else puts exactly that playlist's music on the iPod. Tracks held on by a playlist show a checked, greyed-out box; uncheck the playlist to release them.
 
