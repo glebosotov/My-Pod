@@ -168,7 +168,7 @@ Swift talks to libgpod through `core/ipod-api/ipod-api.c`, a small C wrapper tha
 
 Or neither: General ▸ Management can set an iPod to *Manual mode*, where it never syncs and you add and remove music yourself in the Manual tab. That's per iPod, so it doesn't affect any other device.
 
-**Matching.** The iPod's database doesn't store source file paths, so library tracks are matched to device tracks on `(artist, album, title)`, Unicode-normalised so accented titles compare equal across the filesystem and the database.
+**Matching.** The iPod's database doesn't store source file paths, so library tracks are matched to device tracks on `(artist, album, track number, title)`, with text Unicode-normalised so accented titles compare equal across the filesystem and the database. An iPod previously filled by iTunes may have different track numbers from those parsed from filenames; the first sync then replaces those tracks. Tracks with the same title and number on separate discs can still collide.
 
 **Transcoding.** Formats the iPod can't play are encoded with `afconvert` to AAC-LC 256 kbps, constrained VBR, at 44.1 kHz by default. Those specifics matter on older hardware: true VBR breaks seeking on an iPod Photo, and hi-res sources passed through at 48 or 96 kHz skip during playback. The conversion cache is versioned, so changing the encoder settings invalidates it automatically.
 

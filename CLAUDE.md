@@ -248,9 +248,14 @@ unless marked `nonisolated`**. That is why value types touched by background wor
 ### Track identity (`TrackKey`)
 
 The iPod database stores no source file paths, so library↔device matching is on
-`(artist, album, title)`, each NFC-normalized, trimmed, and lowercased. The same key drives the sync
-diff, the Music tab's "new music" dots, and playlist entry resolution — they must agree or the three
-features contradict each other.
+`(artist, album, track number, title)`. Strings are NFC-normalized, trimmed, and lowercased; track
+number is compared as stored. The same key drives the sync diff, the Music tab's "new music" dots,
+and playlist entry resolution — they must agree or the three features contradict each other.
+
+Adding track number distinguishes repeated titles on one album, but an iPod populated by iTunes may
+have track numbers that differ from filename-parsed numbers. Those tracks will be removed and added
+again on the first sync. Disc number is not part of the key yet because the scanner does not parse it;
+equal titles and track numbers across discs can still collide.
 
 M3U entries resolve through their source file paths in the scanned sync plan, then use that track's
 `TrackKey`. The path may name a folder differently from the album displayed in the library; parsing
