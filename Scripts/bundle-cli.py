@@ -124,6 +124,12 @@ def build(args):
         for path in rpaths(destination):
             if not path.startswith(SYSTEM):
                 subprocess.run(['install_name_tool', '-delete_rpath', path, str(destination)], check=True)
+        # Same fixed-length hash replacement as Nix remove-references-to.
+        # These optional data/module lookup paths were proved unnecessary by
+        # the no-Nix integration test; keep Nix from retaining their closures.
+        data = destination.read_bytes()
+        data = re.sub(rb'/nix/store/[0-9a-z]{32}-', b'/nix/store/' + b'e' * 32 + b'-', data)
+        destination.write_bytes(data)
         subprocess.run(['codesign', '--force', '--sign', '-', str(destination)], check=True)
         for dependency in dependencies(destination):
             if not dependency.startswith(SYSTEM + ('@loader_path/',)):

@@ -38,7 +38,7 @@
     devShells = nixpkgs.lib.genAttrs [ "aarch64-darwin" "x86_64-darwin" ] (system:
       let pkgs = import nixpkgs { inherit system; }; in {
         default = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [ pkg-config autoconf automake libtool gtk-doc intltool ffmpeg (python3.withPackages (p: [ p.mutagen ])) ];
+          nativeBuildInputs = with pkgs; [ pkg-config autoconf automake libtool gtk-doc intltool ripgrep ffmpeg (python3.withPackages (p: [ p.mutagen ])) ];
           buildInputs = with pkgs; [ glib gdk-pixbuf libplist libxml2 sqlite zlib gettext ];
           # Use Apple's SDK/compiler for the Xcode application and C bridge.
           shellHook = ''
