@@ -1,15 +1,63 @@
 # My Pod
 
+This fork adds tag-first imports, metadata repair for existing tracks, and a headless CLI.
+The GUI and CLI share the same scanner and sync engine.
+
 A native macOS app for syncing music to classic iPods, built on [libgpod](https://gitlab.gnome.org/Archive/libgpod).
 
 Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI interface on top of libgpod so a click-wheel iPod can still be kept in sync with a music library on disk — including transcoding formats the iPod can't play, writing cover art, and syncing playlists.
 
 ![The General tab, showing the connected iPod's details, library folders, management mode, quality ceiling and the storage bar](docs/screenshots/01-general-tab.webp)
 
+## CLI and local verification
+
+Build with installed Xcode and pinned Nix dependencies:
+
+```sh
+nix develop --profile .nix-profile --command ./Scripts/build-nix.sh
+nix develop --command ./Scripts/test.sh
+build/Build/Products/Release/mypod help
+```
+
+Set `MYPOD_DEVELOPER_DIR` when Xcode is outside `/Applications/Xcode.app/Contents/Developer`.
+The build produces the GUI app and a `mypod` symlink beside it; keep both together.
+The `.nix-profile` link keeps the runtime libraries available for this local build;
+retain it while using the build.
+
+```sh
+mypod devices
+mypod scan --library "$HOME/Music/SoulSync/Library"
+mypod plan --library "$HOME/Music/SoulSync/Library" --device /Volumes/IPOD --quality aac48
+mypod sync --library "$HOME/Music/SoulSync/Library" --device /Volumes/IPOD \
+  --device-id ID_FROM_DEVICES --quality aac48 --eject
+```
+
+Use the built executable's full path or put its directory on `PATH`. CLI output is JSON;
+logs go to stderr. Sync is additive unless `--delete` explicitly enables mirroring.
+`--playlists /absolute/directory` replaces all user playlists with that directory's
+M3Us; omitting it preserves device playlists. Preview the same options with `plan`.
+A missing M3U track is an error. Use repeatable `--exclude /absolute/file` options
+to omit duplicate source formats; the planner refuses ambiguous identities.
+`--resend-artwork` refreshes all matched covers; ordinarily only covers newer than
+the device database are refreshed. The CLI uses an independent conversion cache,
+configurable with `--cache`; it does not consume GUI selection or quality preferences.
+
+Writes require the device ID and a mounted-volume root. Close the GUI first: fork
+processes hold a common exclusive lock while a database is open. Signals request a
+safe stop, and `--eject` runs only after a successful save with no reported failures.
+Exit codes and all options are documented by `mypod help`. A scheduler can call this
+command when the device mounts; this repository does not install an automatic trigger.
+
+The tests generate tagged MP3/M4A/FLAC files and a disposable libgpod database. They
+check metadata persistence, conversion, lyrics, migration, idempotence, playlist
+resolution and preservation of ratings/play counts. The optional mounted-volume integration test is `nix develop --command ./Tests/cli-integration.sh`
+after a normal build. It checks the actual CLI and eject using a disposable HFS+
+disk image. Tests do not establish playback or eject behavior on physical hardware.
+
 ## Features
 
 - **Automatic device detection** — the iPod is picked up as soon as it mounts; no pairing or setup.
-- **Library mirroring** — pick a Plex-structured folder (`Root/Artist/Album/Track`) and either sync all of it or check the artists, albums and tracks you want. Album names come from matching embedded tags in sampled tracks when available, with the folder name as a fallback. Sync is a two-way mirror: checked music is added, unchecked music is removed.
+- **Library mirroring** — pick a music folder and either sync all of it or check the artists, albums and tracks you want. Files are discovered recursively and grouped by embedded album artist/artist and album. Folder and filename values are fallbacks for missing identity tags. Sync is a two-way mirror: checked music is added, unchecked music is removed.
 - **Manual mode** — an iPod can be managed by hand instead of mirrored, the way iTunes' *Manually manage music* did. Add and remove tracks yourself in the Manual tab and that iPod never syncs with your library, so nothing is removed behind your back. It's a per-iPod choice, so one iPod can mirror your library while another is curated by hand.
 - **New-music highlighting** — anything in your library that isn't on the iPod is marked with a dot, rolled up onto album and artist rows, and counted in the toolbar.
 - **Selection details** — click an artist, album or track and the panel beside the library tells you what it is: cover art, formats, sizes on disk and on the iPod, what's been converted, and what's already on the device. Shift-click to roll several together.
@@ -162,7 +210,7 @@ Swift talks to libgpod through `core/ipod-api/ipod-api.c`, a small C wrapper tha
 
 ## How it works
 
-**Library layout.** Music is read from a Plex-style tree — `Root/Artist/Album/Track`. The artist comes from its folder; the album name comes from matching embedded tags in up to two tracks, falling back to its folder name. Track numbers and titles are parsed from filenames.
+**Library metadata.** Embedded title, artist, album and track number take precedence over paths. Untagged files fall back to `Artist/Album/01 - Title`. Album artist groups compilations; disc number distinguishes multidisc tracks. Selections and M3Us continue to identify files by source path. Ambiguous duplicate musical identities and incomplete scans are refused before syncing.
 
 **What syncs.** General ▸ Library offers the same two choices iTunes did: *Entire music library*, or *Selected playlists, artists and albums*. In the second mode the checkboxes in the Music and Playlists tabs decide what goes, and a checked playlist also selects the tracks it points at — so checking one playlist and nothing else puts exactly that playlist's music on the iPod. Tracks held on by a playlist show a checked, greyed-out box; uncheck the playlist to release them.
 
@@ -195,7 +243,7 @@ Only one format is cached at a time, so changing this deletes the converted file
 
 The goal is that a sync always works by default, not that it extracts every last bit of fidelity the hardware can theoretically manage. If you'd rather have the latter, [Rockbox](https://www.rockbox.org) replaces the iPod's firmware and plays considerably more than the stock software will.
 
-**Metadata.** `afconvert` output carries no tags, so title, artist, album and artwork are written directly into the iPod database rather than embedded in the file. The iPod displays everything correctly; previewing a cached `.m4a` in Finder or Music.app will show no tags.
+**Metadata.** Imports populate genre, year, album artist, composer, disc/track numbers and totals, compilation, sort fields, grouping, comments and BPM as well as the basic identity and audio properties. Existing matches are updated in place, preserving ratings, play history and audio files. Recognizable older folder-based imports migrate without recopying. Converted files retain lyrics; descriptive tags and artwork are stored in the iPod database. Unsupported provider-specific IDs and ReplayGain tags are not mapped to database fields.
 
 ## Acknowledgements
 

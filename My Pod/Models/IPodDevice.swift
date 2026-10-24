@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum IPodError: LocalizedError {
     case openFailed(String)
@@ -29,6 +30,7 @@ struct SyncStats: Sendable, Equatable {
 }
 
 actor IPodDevice {
+    private nonisolated(unsafe) var lockFD: Int32 = -1
     let mountpoint: URL
     private nonisolated(unsafe) var db: OpaquePointer?
 
@@ -38,6 +40,14 @@ actor IPodDevice {
 
     func open() throws {
         guard db == nil else { return }
+        let lockPath = "/tmp/mypod-\(getuid()).lock"
+        let fd = Darwin.open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw IPodError.openFailed("Cannot open sync lock") }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(fd)
+            throw IPodError.openFailed("Another My Pod process has an iPod open. Close its window/app before using the CLI.")
+        }
+        lockFD = fd
         var errorPtr: UnsafeMutablePointer<CChar>? = nil
         let handle: OpaquePointer? = mountpoint.path.withCString { mountCStr in
             ipod_open(mountCStr, &errorPtr)
@@ -45,6 +55,8 @@ actor IPodDevice {
         guard let handle else {
             let msg = errorPtr.flatMap { String(cString: $0) } ?? "Unknown error"
             ipod_free_string(errorPtr)
+            Darwin.close(lockFD)
+            lockFD = -1
             throw IPodError.openFailed(msg)
         }
         ipod_free_string(errorPtr)
@@ -55,6 +67,7 @@ actor IPodDevice {
         guard let db else { return }
         ipod_close(db)
         self.db = nil
+        if lockFD >= 0 { Darwin.close(lockFD); lockFD = -1 }
     }
 
     func save() throws {
@@ -126,9 +139,11 @@ actor IPodDevice {
         genre: String? = nil,
         year: Int = 0,
         discNumber: Int = 0,
-        artworkPath: String? = nil
+        artworkPath: String? = nil,
+        tags: EmbeddedTags? = nil
     ) throws {
         guard let db else { throw IPodError.notOpen }
+        guard durationMS > 0 else { throw IPodError.syncFailed("Unreadable or empty audio: \(filepath.path)") }
         // macOS gives filesystem-derived strings in NFD (decomposed: e.g. "u" +
         // combining diaeresis). iPod firmware expects NFC (precomposed: "ü") —
         // it has no glyphs for combining marks and renders NFD as the base
@@ -180,6 +195,20 @@ actor IPodDevice {
             throw IPodError.syncFailed(msg)
         }
         ipod_free_string(result.error)
+        if let tags { try setTags(tags, index: Int(ipod_get_track_count(db)) - 1) }
+    }
+
+    /// An index also works before libgpod assigns IDs during save.
+    func setTags(_ tags: EmbeddedTags, index: Int) throws {
+        guard let db else { throw IPodError.notOpen }
+        let result = tags.withCMetadata { metadata in
+            var metadata = metadata
+            return ipod_set_track_tags(db, Int32(index), &metadata)
+        }
+        defer { ipod_free_string(result.error) }
+        guard result.success != 0 else {
+            throw IPodError.syncFailed(result.error.map { String(cString: $0) } ?? "Metadata update failed")
+        }
     }
 
     /// Remove a track from the iPod database (and delete the file from the iPod).
@@ -296,6 +325,7 @@ actor IPodDevice {
     }
 
     deinit {
+        if lockFD >= 0 { Darwin.close(lockFD) }
         if let db {
             ipod_close(db)
         }

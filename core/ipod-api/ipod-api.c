@@ -621,6 +621,27 @@ static IPodTrackInfo *track_to_info(Itdb_Track *track)
     IPodTrackInfo *info = (IPodTrackInfo *)calloc(1, sizeof(IPodTrackInfo));
     if (!info) return NULL;
 
+    info->tags.title = glib_strdup(track->title);
+    info->tags.artist = glib_strdup(track->artist);
+    info->tags.album = glib_strdup(track->album);
+    info->tags.genre = glib_strdup(track->genre);
+    info->tags.albumArtist = glib_strdup(track->albumartist);
+    info->tags.composer = glib_strdup(track->composer);
+    info->tags.grouping = glib_strdup(track->grouping);
+    info->tags.comment = glib_strdup(track->comment);
+    info->tags.sortTitle = glib_strdup(track->sort_title);
+    info->tags.sortArtist = glib_strdup(track->sort_artist);
+    info->tags.sortAlbum = glib_strdup(track->sort_album);
+    info->tags.sortAlbumArtist = glib_strdup(track->sort_albumartist);
+    info->tags.sortComposer = glib_strdup(track->sort_composer);
+    info->tags.trackNumber = track->track_nr;
+    info->tags.trackTotal = track->tracks;
+    info->tags.discNumber = track->cd_nr;
+    info->tags.discTotal = track->cds;
+    info->tags.year = track->year;
+    info->tags.bpm = track->BPM;
+    info->tags.compilation = track->compilation;
+    info->tags.hasLyrics = track->lyrics_flag;
     info->id = track->id;
     info->title = glib_strdup(track->title);
     info->artist = glib_strdup(track->artist);
@@ -664,6 +685,19 @@ void ipod_free_track_info(IPodTrackInfo *info)
 {
     if (!info) return;
 
+    free((void *)info->tags.title);
+    free((void *)info->tags.artist);
+    free((void *)info->tags.album);
+    free((void *)info->tags.genre);
+    free((void *)info->tags.albumArtist);
+    free((void *)info->tags.composer);
+    free((void *)info->tags.grouping);
+    free((void *)info->tags.comment);
+    free((void *)info->tags.sortTitle);
+    free((void *)info->tags.sortArtist);
+    free((void *)info->tags.sortAlbum);
+    free((void *)info->tags.sortAlbumArtist);
+    free((void *)info->tags.sortComposer);
     free(info->title);
     free(info->artist);
     free(info->album);
@@ -687,6 +721,57 @@ static void remove_track_from_all_playlists(Itdb_iTunesDB *itdb, Itdb_Track *tra
 /* ============================================================================
  * Track Operations
  * ============================================================================ */
+
+IPodResult ipod_set_track_tags(IPodDB *db, int index, const IPodTagMetadata *tags)
+{
+    IPodResult result = {0, NULL};
+    if (!db || !db->itdb || !tags || index < 0) {
+        result.error = strdup("Invalid metadata update");
+        return result;
+    }
+    GList *item = g_list_nth(db->itdb->tracks, index);
+    if (!item) {
+        result.error = strdup("Track no longer exists");
+        return result;
+    }
+    Itdb_Track *track = item->data;
+    g_free(track->title);
+    track->title = g_strdup(tags->title && *tags->title ? tags->title : NULL);
+    g_free(track->artist);
+    track->artist = g_strdup(tags->artist && *tags->artist ? tags->artist : NULL);
+    g_free(track->album);
+    track->album = g_strdup(tags->album && *tags->album ? tags->album : NULL);
+    g_free(track->genre);
+    track->genre = g_strdup(tags->genre && *tags->genre ? tags->genre : NULL);
+    g_free(track->albumartist);
+    track->albumartist = g_strdup(tags->albumArtist && *tags->albumArtist ? tags->albumArtist : NULL);
+    g_free(track->composer);
+    track->composer = g_strdup(tags->composer && *tags->composer ? tags->composer : NULL);
+    g_free(track->grouping);
+    track->grouping = g_strdup(tags->grouping && *tags->grouping ? tags->grouping : NULL);
+    g_free(track->comment);
+    track->comment = g_strdup(tags->comment && *tags->comment ? tags->comment : NULL);
+    g_free(track->sort_title);
+    track->sort_title = g_strdup(tags->sortTitle && *tags->sortTitle ? tags->sortTitle : NULL);
+    g_free(track->sort_artist);
+    track->sort_artist = g_strdup(tags->sortArtist && *tags->sortArtist ? tags->sortArtist : NULL);
+    g_free(track->sort_album);
+    track->sort_album = g_strdup(tags->sortAlbum && *tags->sortAlbum ? tags->sortAlbum : NULL);
+    g_free(track->sort_albumartist);
+    track->sort_albumartist = g_strdup(tags->sortAlbumArtist && *tags->sortAlbumArtist ? tags->sortAlbumArtist : NULL);
+    g_free(track->sort_composer);
+    track->sort_composer = g_strdup(tags->sortComposer && *tags->sortComposer ? tags->sortComposer : NULL);
+    track->track_nr = tags->trackNumber;
+    track->tracks = tags->trackTotal;
+    track->cd_nr = tags->discNumber;
+    track->cds = tags->discTotal;
+    track->year = tags->year;
+    track->BPM = tags->bpm;
+    track->compilation = tags->compilation;
+    track->lyrics_flag = tags->hasLyrics;
+    result.success = 1;
+    return result;
+}
 
 IPodResult ipod_add_track(IPodDB *db, const char *filepath,
                           const char *title, const char *artist,

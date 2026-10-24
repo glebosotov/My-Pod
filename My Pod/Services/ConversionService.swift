@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum ConversionError: LocalizedError {
     case unsupported(URL)
@@ -23,11 +24,8 @@ enum ConversionError: LocalizedError {
 /// We previously tried AVAssetReader → AVAssetWriter for this so we could
 /// embed metadata + artwork into the m4a directly. The result wouldn't play
 /// on iPod Photo no matter how we patched the atom layout (esds, ftyp, hdlr).
-/// afconvert produces iTunes-shaped files that play universally; iPod-side
-/// metadata + artwork are set via libgpod (`itdb_track_set_thumbnails`,
-/// `track->title`/`artist`/`album` etc.), so the m4a itself doesn't need any
-/// embedded metadata for iPod use. Cost: previewing one of these files in
-/// QuickLook or playing it in Music.app shows no tags.
+/// afconvert's container layout is retained. Descriptive metadata and artwork
+/// are set through libgpod; lyrics are embedded afterward without remuxing audio.
 // `nonisolated` — this is a stateless value type used from background tasks
 // (sync engine + library store pre-convert). Overrides the project-wide
 // MainActor default so we don't need `await` on every access to its statics.
@@ -47,7 +45,7 @@ nonisolated struct ConversionService: Sendable {
     ///     at the default ceiling is byte-identical, and each ceiling's output
     ///     lives at its own path, so no two settings can be confused for each
     ///     other.
-    static let cacheVersion = "9"
+    static let cacheVersion = "10"
 
     /// AAC encoder bit rate in bits/second.
     static let aacBitRate = 256_000
@@ -89,16 +87,19 @@ nonisolated struct ConversionService: Sendable {
     init(
         maxConcurrent: Int = max(2, min(8, ProcessInfo.processInfo.activeProcessorCount / 2)),
         cacheLocation: CacheLocation = .current,
-        ceiling: ConversionCeiling
+        ceiling: ConversionCeiling,
+        cacheRoot: URL? = nil
     ) {
         self.maxConcurrent = max(1, maxConcurrent)
         self.cacheLocation = cacheLocation
+        self.cacheRoot = cacheRoot
         self.ceiling = ceiling
     }
 
     /// Where the user has chosen to keep converted files. Captured at init so
     /// a single sync run can't straddle a location change mid-flight.
     let cacheLocation: CacheLocation
+    let cacheRoot: URL?
 
     /// The quality ceiling to encode against. Captured at init for the same
     /// reason as `cacheLocation` — a run that changed ceiling partway through
@@ -141,6 +142,11 @@ nonisolated struct ConversionService: Sendable {
 
     nonisolated func iPodPlayableURL(for track: LibraryTrack) -> URL {
         guard needsConversion(track) else { return track.url }
+        if let cacheRoot {
+            let hash = SHA256.hash(data: Data(track.url.path.utf8)).map { String(format: "%02x", $0) }.joined()
+            return cacheRoot.appendingPathComponent("v" + Self.cacheVersion)
+                .appendingPathComponent(ceiling.rawValue).appendingPathComponent(hash + ".m4a")
+        }
         return cacheLocation.url(forSource: track.url, ceiling: ceiling)
     }
 
@@ -248,6 +254,7 @@ nonisolated struct ConversionService: Sendable {
     nonisolated private func cacheVersionMatches(target: URL) -> Bool {
         // No marker means the version is already part of the path, so simply
         // finding a file there proves it was written by this version.
+        if cacheRoot != nil { return true }
         guard let marker = cacheLocation.versionMarker(forTarget: target) else { return true }
         guard let data = try? Data(contentsOf: marker),
               let s = String(data: data, encoding: .utf8) else {
@@ -268,16 +275,18 @@ nonisolated struct ConversionService: Sendable {
             return target
         }
 
-        try cacheLocation.createDirectory(for: target)
+        if cacheRoot != nil {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } else { try cacheLocation.createDirectory(for: target) }
         let started = Date()
         Log.convert.debug("convert started\(force ? " (forced)" : ""): \(track.url.lastPathComponent) → \(codec.rawValue) @ \(rate) Hz")
         do {
-            try await export(source: track.url, to: target, rate: rate, codec: codec)
+            try await export(source: track.url, to: target, rate: rate, codec: codec, lyrics: track.tags["lyrics"])
         } catch {
             Log.convert.error("convert failed: \(track.url.lastPathComponent) — \(error.localizedDescription)")
             throw error
         }
-        if let marker = cacheLocation.versionMarker(forTarget: target) {
+        if cacheRoot == nil, let marker = cacheLocation.versionMarker(forTarget: target) {
             try? Self.cacheVersion.data(using: .utf8)?.write(to: marker, options: [.atomic])
         }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
@@ -341,7 +350,8 @@ nonisolated struct ConversionService: Sendable {
         source: URL,
         to target: URL,
         rate: Int,
-        codec: ConversionCeiling.Codec
+        codec: ConversionCeiling.Codec,
+        lyrics: String?
     ) async throws {
         let tmp = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).part")
@@ -389,7 +399,13 @@ nonisolated struct ConversionService: Sendable {
             ], cleaningUp: [pcm, tmp])
         }
 
-        try FileManager.default.moveItem(at: tmp, to: target)
+        do {
+            if let lyrics { try MP4Lyrics.write(lyrics, to: tmp) }
+            try FileManager.default.moveItem(at: tmp, to: target)
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            throw error
+        }
     }
 
     /// One afconvert invocation. `cleaningUp` is removed if it fails, so a

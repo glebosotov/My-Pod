@@ -125,3 +125,6 @@ core/libgpod/po/stamp-it
 # Scripts/fetch-intel-deps.sh, reproducible from a clean checkout.
 Vendor/libgpod-arch/
 Vendor/intel-deps/
+
+# Pin the local Nix build/runtime shell while its products are in use.
+/.nix-profile*

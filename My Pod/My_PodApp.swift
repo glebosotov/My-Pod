@@ -9,7 +9,6 @@
 import AppKit
 import SwiftUI
 
-@main
 struct My_PodApp: App {
     @Environment(\.openWindow) private var openWindow
 

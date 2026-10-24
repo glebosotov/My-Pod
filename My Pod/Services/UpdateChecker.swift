@@ -44,7 +44,7 @@ final class UpdateChecker {
     /// Drives the sheet. Set by the menu command, cleared by the sheet.
     var isPresenting = false
 
-    private let endpoint = URL(string: "https://api.github.com/repos/studio-rischio/My-Pod/releases/latest")!
+    private let endpoint = URL(string: "https://api.github.com/repos/glebosotov/My-Pod/releases/latest")!
 
     private init() {}
 
@@ -105,7 +105,7 @@ final class UpdateChecker {
     private func fetchLatest() async throws -> ReleaseInfo {
         var request = URLRequest(url: endpoint, timeoutInterval: 15)
         // GitHub rejects requests without a User-Agent outright.
-        request.setValue("MyPod/\(currentVersion) ( https://github.com/studio-rischio/My-Pod )",
+        request.setValue("MyPod/\(currentVersion) ( https://github.com/glebosotov/My-Pod )",
                          forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 

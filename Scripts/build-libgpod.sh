@@ -119,7 +119,7 @@ pkg-config --exists glib-2.0 || fail "glib-2.0 not found. Install with: brew ins
 # Only ./configure needs the autotools; once it exists a plain checkout can
 # rebuild without them.
 if [ ! -f "$LIBGPOD_DIR/configure" ]; then
-    for tool in autoreconf autoconf automake glibtoolize gtkdocize intltoolize; do
+    for tool in autoreconf autoconf automake "${LIBTOOLIZE:-glibtoolize}" gtkdocize intltoolize; do
         command -v "$tool" >/dev/null 2>&1 || \
             fail "$tool not found (needed to generate libgpod's configure). Install with: brew install autoconf automake libtool gtk-doc intltool"
     done

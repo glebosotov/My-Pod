@@ -130,8 +130,8 @@ x86_64 from re-doing arm64.
 
 Both `Vendor/intel-deps/` and `Vendor/libgpod-arch/` are gitignored build products.
 
-**There is no test target and no tests.** Verification is by building and running against a real
-device. An Intel build can at least be smoke-tested on Apple silicon — it launches under Rosetta,
+Run the [synthetic regression suite](README.md#cli-and-local-verification). Firmware behavior
+still needs a real device. An Intel build can at least be smoke-tested on Apple silicon — it launches under Rosetta,
 which exercises the same dyld path that "Library not loaded" failures show up in:
 
 ```bash
@@ -390,9 +390,10 @@ Raising the ceiling raises a limit; it cannot put back what was never there.
   for the user's library rather than the iPod. ImageIO throughout, never `NSImage`, which ignores
   EXIF orientation and rescales silently. Writing the file is enough to reach the device: it outranks
   every other name `ArtworkLocator` looks for, so no sync-path change was needed.
-- **Transcoded files carry no tags.** afconvert output has no metadata; title/artist/album/artwork
-  are written into the iPod database instead. That is intentional — do not "fix" it by embedding
-  tags, and expect cached `.m4a` files to look blank in Finder/Music.app.
+- Descriptive metadata is written through `ipod_set_track_tags` without replacing ratings,
+  play counts or audio files. Converted audio also embeds lyrics; `MP4Lyrics` preserves
+  afconvert's sample tables and media offsets. Bump `ConversionService.cacheVersion` when
+  changing converted output.
 - **Artwork ordering** in `ipod_add_track_full`: `itdb_track_set_thumbnails` must run *before*
   `itdb_track_add`, matching the known-working CLI flow. libgpod renders the thumbnail bytes lazily
   during `itdb_write`, so the source image file must still exist at save time (hence the sync
@@ -478,7 +479,6 @@ matter. It also gets no README or CLAUDE.md of its own.
   one returns the album at score 100. Cover Art Archive candidates are probed with a HEAD before
   being offered, because nothing in the MusicBrainz response says whether art exists and most
   releases have none — measured at two dead tiles per live one.
-- Library layout is Plex-style `Root/Artist/Album/Track`. Artist comes from the directory, while
-  album comes from matching embedded tags in up to two playable files (folder name if missing or
-  conflicting). Track number and title are parsed from the filename by
-  `LibraryScanner.parseFilename`, which mirrors the C-side `parse_track_filename`.
+- Library scanning, metadata fallback, identity and CLI behavior are documented in
+  [README.md](README.md#how-it-works). Both manual and mirrored imports use
+  `LibraryScanner.readTrack`; keep their metadata semantics aligned.

@@ -9,7 +9,7 @@ final class SyncEngine {
     /// The conversion settings of the iPod being synced. Set by `plan`, and
     /// reused by `execute` so a single run can't straddle a device swap.
     /// Starts at the default profile's ceiling purely so it's never nil.
-    private(set) var conversionService = ConversionService(ceiling: .current)
+    private(set) var conversionService = ConversionService(cacheLocation: .applicationSupport, ceiling: .aac44)
     private var cancelRequested = false
 
     /// Phase weighting for the run in flight, derived from its plan. Only the
@@ -58,24 +58,40 @@ final class SyncEngine {
         playlists: [Playlist],
         device: IPodDevice,
         ceiling: ConversionCeiling,
-        freeBytes: UInt64
+        freeBytes: UInt64,
+        useDeviceProfile: Bool = true,
+        allowRemoval: Bool = true,
+        replacePlaylists: Bool = true,
+        cacheRoot: URL? = nil,
+        artworkSince: Date? = nil
     ) async {
         Log.sync.info("plan started: \(selectedPaths.count) selected, \(playlists.count) playlists, quality \(ceiling.rawValue)")
         state = .planning
         cancelRequested = false
-        conversionService = ConversionService(ceiling: ceiling)
+        conversionService = ConversionService(cacheLocation: useDeviceProfile ? .current : .applicationSupport, ceiling: ceiling, cacheRoot: cacheRoot)
 
         // Backstop, not the mechanism. A manually managed iPod shows no Music
         // tab and no Sync button, so this should be unreachable — but the whole
         // point of the mode is that a mirror must never run against a device
         // that owns its own contents, and "unreachable" is a property of today's
         // UI rather than of the engine.
-        guard !DeviceProfileStore.shared.active.manageManually else {
+        guard !useDeviceProfile || !DeviceProfileStore.shared.active.manageManually else {
             Log.sync.error("refusing to plan: this iPod is managed by hand")
             state = .failed(
                 "This iPod is set to be managed by hand, so it doesn't sync with your library. "
                 + "Use the Manual tab to add or remove music, or switch it back in the General tab."
             )
+            return
+        }
+        guard library.scanErrors.isEmpty else {
+            state = .failed("Library scan failed; refusing a partial mirror:\n" + library.scanErrors.joined(separator: "\n"))
+            return
+        }
+        let allTracks = library.artists.flatMap(\.albums).flatMap(\.tracks).filter { selectedPaths.contains($0.url.path) }
+        let duplicates = Dictionary(grouping: allTracks, by: { TrackKey(library: $0) }).values.filter { $0.count > 1 }
+        guard duplicates.isEmpty else {
+            state = .failed("Multiple files have the same artist, album, disc, track and title. Keep one source per track:\n"
+                + duplicates.flatMap { $0.map { $0.url.path } }.joined(separator: "\n"))
             return
         }
         let iPodTracks = await device.tracks()
@@ -87,8 +103,7 @@ final class SyncEngine {
             return
         }
 
-        let profile = DeviceProfileStore.shared.active
-        let plan = Self.computePlan(
+        var plan = Self.computePlan(
             libraryRoot: libraryRoot,
             library: library,
             selectedPaths: selectedPaths,
@@ -97,11 +112,13 @@ final class SyncEngine {
             devicePlaylists: devicePlaylists,
             conversion: conversionService,
             freeBytes: freeBytes,
-            artworkQueued: ArtworkSync.queued(for: profile),
-            artworkSyncedAt: ArtworkSync.baseline(for: profile)
+            artworkQueued: useDeviceProfile ? ArtworkSync.queued(for: DeviceProfileStore.shared.active) : [],
+            artworkSyncedAt: useDeviceProfile ? ArtworkSync.baseline(for: DeviceProfileStore.shared.active) : artworkSince
         )
 
-        guard plan.fits else {
+        if !allowRemoval { plan.toRemove = []; plan.removedBytes = 0 }
+        if !replacePlaylists { plan.playlistChanges = []; plan.playlistCount = 0 }
+        guard plan.fits, freeBytes > 0 || plan.toAdd.isEmpty else {
             let short = Self.byteString(plan.shortfallBytes)
             Log.sync.error("refusing to plan: needs \(short) more than the iPod has free")
             state = .failed(Self.capacityRefusal(plan))
@@ -219,17 +236,25 @@ final class SyncEngine {
         // 4. Diff against the iPod using the shared TrackKey identity.
         let plannedKeys = Set(planned.map { TrackKey(plan: $0) })
         let playlistKeysByPath = Dictionary(
-            planned.map { ($0.library.url.standardizedFileURL.path.precomposedStringWithCanonicalMapping, TrackKey(plan: $0)) },
+            byPath.values.filter { plannedKeys.contains(TrackKey(library: $0)) }
+                .map { ($0.url.standardizedFileURL.path.precomposedStringWithCanonicalMapping, TrackKey(library: $0)) },
             uniquingKeysWith: { first, _ in first }
         )
-        let iPodByKey: [TrackKey: TrackInfo] = Dictionary(
-            iPodTracks.map { (TrackKey(ipod: $0), $0) },
-            uniquingKeysWith: { a, _ in a }
-        )
-
-        let toAdd = planned.filter { !iPodByKey.keys.contains(TrackKey(plan: $0)) }
-        let toRemove = iPodTracks.filter { !plannedKeys.contains(TrackKey(ipod: $0)) }
-        let unchangedCount = plannedKeys.count - toAdd.count
+        let matches = TrackMatching.matches(planned.map(\.library), device: iPodTracks)
+        let toAdd = planned.filter { matches[$0.library.url] == nil }
+        let matchedIDs = Set(matches.values.map(\.id))
+        let toRemove = iPodTracks.filter { !matchedIDs.contains($0.id) }
+        let metadataUpdates = planned.compactMap { item -> MetadataUpdate? in
+            guard let existing = matches[item.library.url], existing.tags != item.library.importedTags else { return nil }
+            return MetadataUpdate(trackID: existing.id, library: item.library)
+        }
+        let unchangedCount = matches.count - metadataUpdates.count
+        // Diff playlists/artwork using identities after the metadata update.
+        let updatesByID = Dictionary(uniqueKeysWithValues: metadataUpdates.map { ($0.trackID, $0) })
+        let futureTracks = iPodTracks.map { track in
+            guard let update = updatesByID[track.id] else { return track }
+            return track.retagged(update.library)
+        }
 
         // 5. Conversions still needed.
         let pendingConversion = planned
@@ -249,7 +274,7 @@ final class SyncEngine {
         let playlistChanges = computePlaylistChanges(
             playlists: playlists,
             devicePlaylists: devicePlaylists,
-            iPodTracks: iPodTracks,
+            iPodTracks: futureTracks,
             postSyncKeys: plannedKeys,
             libraryRoot: libraryRoot,
             keysByPath: playlistKeysByPath
@@ -261,7 +286,7 @@ final class SyncEngine {
         // second write of the same bytes.
         let artworkUpdates = ArtworkSync.updates(
             library: library,
-            deviceTracks: iPodTracks,
+            deviceTracks: futureTracks.filter { matchedIDs.contains($0.id) },
             queued: artworkQueued,
             changedSince: artworkSyncedAt
         )
@@ -277,7 +302,8 @@ final class SyncEngine {
             playlistCount: playlists.count,
             playlistKeysByPath: playlistKeysByPath,
             playlistChanges: playlistChanges,
-            artworkUpdates: artworkUpdates
+            artworkUpdates: artworkUpdates,
+            metadataUpdates: metadataUpdates
         )
     }
 
@@ -374,7 +400,9 @@ final class SyncEngine {
         plan: SyncPlan,
         libraryRoot: URL,
         playlists: [Playlist],
-        device: IPodDevice
+        device: IPodDevice,
+        replacePlaylists: Bool = true,
+        recordArtworkState: Bool = true
     ) async {
         Log.sync.info("execute started: +\(plan.toAddCount) -\(plan.toRemoveCount) convert=\(plan.pendingConversion.count)")
         cancelRequested = false
@@ -406,9 +434,9 @@ final class SyncEngine {
                 if case .failure = outcome { convertedFailures += 1 }
             }
             Log.sync.info("phase: converting done (\(convertedFailures) failed of \(plan.pendingConversion.count))")
-            if convertedFailures == plan.pendingConversion.count, !plan.pendingConversion.isEmpty {
-                Log.sync.error("aborting: all \(convertedFailures) conversions failed")
-                state = .failed("All \(convertedFailures) conversions failed.")
+            if convertedFailures > 0 {
+                Log.sync.error("aborting: \(convertedFailures) conversions failed")
+                state = .failed("\(convertedFailures) conversions failed; the iPod was not modified.")
                 return
             }
         }
@@ -417,6 +445,44 @@ final class SyncEngine {
             await finishCancelled(device: device, added: added, removed: removed,
                                   failed: addFailed + removeFailed,
                                   convertedFailures: convertedFailures)
+            return
+        }
+
+        // Validate every addition before editing the database or removing music.
+        var audioProperties: [URL: AudioFileProperties] = [:]
+        for planned in plan.toAdd {
+            if cancelRequested {
+                state = .finished(SyncOutcome(added: 0, removed: 0, skipped: 0, failed: 0,
+                    convertedFailures: 0, totalOnDevice: await device.trackCount(), cancelled: true))
+                return
+            }
+            let properties = await AudioMetadataReader.read(planned.sourceURL)
+            guard properties.durationMS > 0 else {
+                state = .failed("Unreadable or empty audio; the iPod was not modified: " + planned.sourceURL.path)
+                return
+            }
+            audioProperties[planned.sourceURL] = properties
+        }
+
+        if !plan.metadataUpdates.isEmpty {
+            let tracks = await device.tracks()
+            let indices = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
+            for (completed, update) in plan.metadataUpdates.enumerated() {
+                if cancelRequested { break }
+                state = .running(SyncProgress(phase: .metadata, completed: completed,
+                    total: plan.metadataUpdates.count, detail: update.library.title))
+                do {
+                    guard let index = indices[update.trackID] else { throw IPodError.syncFailed("Track vanished during metadata update") }
+                    try await device.setTags(update.library.importedTags, index: index)
+                } catch {
+                    addFailed += 1
+                    Log.sync.error("metadata update failed: \(error.localizedDescription)")
+                }
+            }
+        }
+        if cancelRequested {
+            await finishCancelled(device: device, added: added, removed: removed,
+                failed: addFailed + removeFailed, convertedFailures: convertedFailures)
             return
         }
 
@@ -488,7 +554,7 @@ final class SyncEngine {
                     detail: "\(planned.library.artist) — \(planned.library.title)",
                     phaseStartedAt: addStart
                 ))
-                let props = await AudioMetadataReader.read(planned.sourceURL)
+                guard let props = audioProperties[planned.sourceURL] else { addFailed += 1; continue }
                 // Resolve cover art per-track; ArtworkLocator caches by album
                 // dir so each album's lookup runs once. The cover URL is
                 // passed straight through to ipod_add_track_full so artwork
@@ -514,7 +580,8 @@ final class SyncEngine {
                         bitrate: props.bitrate,
                         sampleRate: props.sampleRate,
                         filetype: props.filetypeString,
-                        artworkPath: coverURL?.path
+                        artworkPath: coverURL?.path,
+                        tags: planned.library.importedTags
                     )
                     added += 1
                     if coverURL != nil { artworkFound += 1 }
@@ -581,13 +648,13 @@ final class SyncEngine {
         }
 
         // 5. Playlists — wipe iPod's user playlists and rewrite from M3Us.
-        let playlistOutcome = await syncPlaylists(
+        let playlistOutcome = replacePlaylists ? await syncPlaylists(
             playlists: playlists,
             changes: plan.playlistChanges,
             libraryRoot: libraryRoot,
             keysByPath: plan.playlistKeysByPath,
             device: device
-        )
+        ) : PlaylistSyncOutcome()
 
         if cancelRequested {
             await finishCancelled(device: device, added: added, removed: removed,
@@ -611,9 +678,11 @@ final class SyncEngine {
         // Baseline moves only here — after a save that landed. A run that
         // failed or was cancelled leaves it alone, so the same artwork is still
         // pending next time rather than being quietly written off.
-        let syncedProfile = DeviceProfileStore.shared.active
-        ArtworkSync.markSynced(syncedProfile)
-        ArtworkSync.clearQueue(for: syncedProfile)
+        if recordArtworkState {
+            let syncedProfile = DeviceProfileStore.shared.active
+            ArtworkSync.markSynced(syncedProfile)
+            ArtworkSync.clearQueue(for: syncedProfile)
+        }
 
         let totalOnDevice = await device.trackCount()
         Log.sync.info("sync finished: added=\(added) removed=\(removed) skipped=\(plan.unchangedCount) failed=\(addFailed + removeFailed) totalOnDevice=\(totalOnDevice) playlists +\(playlistOutcome.added)/-\(playlistOutcome.removed)/~\(playlistOutcome.updated)")
@@ -621,7 +690,7 @@ final class SyncEngine {
             added: added,
             removed: removed,
             skipped: plan.unchangedCount,
-            failed: addFailed + removeFailed,
+            failed: addFailed + removeFailed + playlistOutcome.failed + (artworkSupported ? plan.artworkUpdates.count - artworkUpdated : 0),
             convertedFailures: convertedFailures,
             totalOnDevice: totalOnDevice,
             cancelled: false,
@@ -667,6 +736,7 @@ final class SyncEngine {
         var added = 0
         var removed = 0
         var updated = 0
+        var failed = 0
     }
 
     /// Replace the iPod's user playlists with the contents of the M3U store.
@@ -744,7 +814,7 @@ final class SyncEngine {
                         unmatched += 1
                         continue
                     }
-                    try? await device.addTrackToPlaylist(playlistID: playlistID, trackIndex: index)
+                    try await device.addTrackToPlaylist(playlistID: playlistID, trackIndex: index)
                     distinct.insert(index)
                     matched += 1
                 }
@@ -764,6 +834,7 @@ final class SyncEngine {
                 }
                 Log.sync.info("playlist \"\(playlist.name)\": \(matched) matched, \(unmatched) skipped (not on iPod)")
             } catch {
+                outcome.failed += 1
                 Log.sync.warning("playlist \"\(playlist.name)\" failed: \(error.localizedDescription)")
                 continue
             }

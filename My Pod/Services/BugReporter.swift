@@ -9,7 +9,7 @@ import Foundation
 /// means no one can file a report they haven't seen.
 @MainActor
 enum BugReporter {
-    static let newIssueURL = "https://github.com/studio-rischio/My-Pod/issues/new"
+    static let newIssueURL = "https://github.com/glebosotov/My-Pod/issues/new"
 
     /// The issue form at `.github/ISSUE_TEMPLATE/bug_report.yml`. Targeting it
     /// rather than sending a plain `body=` means a report filed from the app

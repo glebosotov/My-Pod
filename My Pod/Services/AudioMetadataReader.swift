@@ -14,35 +14,6 @@ struct AudioFileProperties: Sendable, Equatable {
 /// Stateless helper. AVAsset reads cheaply — just the format atoms — so this is
 /// fast enough to run synchronously per-track during a sync.
 enum AudioMetadataReader {
-    /// Read only the album tag. The scanner samples at most two files per
-    /// folder; opening every asset during a library scan would be expensive.
-    ///
-    /// FLAC needs the second lookup: AVFoundation leaves `commonMetadata` empty
-    /// for it and surfaces Vorbis comments only through `metadata`, under the
-    /// `org.xiph.vorbis-comment` format with identifiers such as `vorb/ALBUM`.
-    /// There is no public constant for that key space, hence the literal.
-    /// Measured on a 308-album FLAC library: the common key matched none of
-    /// them, the Vorbis identifier matched the 297 that carry a tag.
-    nonisolated static func albumName(_ url: URL) async -> String? {
-        let asset = AVURLAsset(url: url)
-        if let items = try? await asset.load(.commonMetadata),
-           let item = items.first(where: { $0.commonKey == .commonKeyAlbumName }),
-           let name = await trimmedString(of: item) {
-            return name
-        }
-        let vorbisAlbum = AVMetadataIdentifier(rawValue: "vorb/ALBUM")
-        guard let items = try? await asset.load(.metadata),
-              let item = items.first(where: { $0.identifier == vorbisAlbum }),
-              let name = await trimmedString(of: item) else { return nil }
-        return name
-    }
-
-    private nonisolated static func trimmedString(of item: AVMetadataItem) async -> String? {
-        guard let value = try? await item.load(.stringValue) else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
     static func read(_ url: URL) async -> AudioFileProperties {
         let asset = AVURLAsset(url: url)
 

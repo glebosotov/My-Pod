@@ -197,6 +197,18 @@ nonisolated struct LibraryTrack: Sendable, Identifiable, Hashable {
     /// that answer depends on which iPod is being filled, so it's computed by
     /// `needsConversion(under:)` at the point of use.
     let format: SourceFormat
+    var tags = EmbeddedTags()
+
+    var discNumber: Int { tags.number("discNumber") }
+    var importedTags: EmbeddedTags {
+        var result = tags
+        result.values.removeValue(forKey: "lyrics")
+        result["title"] = title
+        result["artist"] = artist
+        result["album"] = album
+        result["trackNumber"] = String(trackNumber)
+        return result
+    }
 
     func needsConversion(under ceiling: ConversionCeiling) -> Bool {
         format.needsConversion(under: ceiling)
@@ -239,6 +251,7 @@ nonisolated struct MusicLibrary: Sendable {
     var artists: [LibraryArtist]
     var totalTracks: Int
     var scannedAt: Date
+    var scanErrors: [String] = []
 
     static let empty = MusicLibrary(root: URL(fileURLWithPath: "/"), artists: [], totalTracks: 0, scannedAt: .distantPast)
 }

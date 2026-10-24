@@ -37,6 +37,11 @@ struct PlaylistChange: Sendable, Equatable, Identifiable {
     var id: String { name }
 }
 
+struct MetadataUpdate: Sendable, Equatable {
+    let trackID: UInt32
+    let library: LibraryTrack
+}
+
 /// Result of computing what the next sync would do.
 struct SyncPlan: Sendable, Equatable {
     /// Tracks that aren't on the iPod yet.
@@ -80,6 +85,8 @@ struct SyncPlan: Sendable, Equatable {
     /// get their artwork attached during the add itself.
     var artworkUpdates: [ArtworkUpdate] = []
 
+    var metadataUpdates: [MetadataUpdate] = []
+
     var toAddCount: Int { toAdd.count }
     var toRemoveCount: Int { toRemove.count }
 
@@ -93,7 +100,7 @@ struct SyncPlan: Sendable, Equatable {
 
     var hasWork: Bool {
         !toAdd.isEmpty || !toRemove.isEmpty || !pendingConversion.isEmpty
-            || !changedPlaylists.isEmpty || !artworkUpdates.isEmpty
+            || !changedPlaylists.isEmpty || !artworkUpdates.isEmpty || !metadataUpdates.isEmpty
     }
 }
 
@@ -101,7 +108,7 @@ struct SyncProgress: Sendable, Equatable {
     /// Declared in execution order — `SyncPhaseWeights` walks the cases in
     /// order to work out how much of the run is already behind us.
     enum Phase: String, Sendable, CaseIterable {
-        case converting, removing, adding, artwork, playlists, saving
+        case converting, metadata, removing, adding, artwork, playlists, saving
     }
     var phase: Phase
     var completed: Int
@@ -127,6 +134,7 @@ struct SyncPhaseWeights: Sendable, Equatable {
     /// need to keep the bar moving at a roughly even rate, not predict time.
     private static let perItem: [SyncProgress.Phase: Double] = [
         .converting: 6.0,    // afconvert run — the dominant cost
+        .metadata:   0.1,
         .removing:   0.2,    // database edit, no file copy
         .adding:     1.0,    // copy one file to the iPod
         .artwork:    0.2,    // database edit; the thumbnails render during save
@@ -144,6 +152,7 @@ struct SyncPhaseWeights: Sendable, Equatable {
     init(plan: SyncPlan) {
         let counts: [SyncProgress.Phase: Double] = [
             .converting: Double(plan.pendingConversion.count),
+            .metadata:   Double(plan.metadataUpdates.count),
             .removing:   Double(plan.toRemoveCount),
             .adding:     Double(plan.toAddCount),
             .artwork:    Double(plan.artworkUpdates.count),

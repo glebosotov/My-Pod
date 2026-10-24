@@ -1,157 +1,94 @@
 import Foundation
 
-/// Walks a Plex-structured root (`Root/<Artist>/<Album>/<Track>`), groups files
-/// into a `MusicLibrary`. Album uses the embedded tag when up to two sampled
-/// tracks agree; artist stays with the directory, and title/track number stay with the
-/// filename. This is a deliberate first step toward tag-based metadata; moving
-/// the remaining fields would also need a consistent identity and playlist
-/// migration. `nonisolated` because scanning runs on a
-/// detached background task — overrides the project-wide MainActor default.
+/// Tags are authoritative. Paths remain stable selection/playlist identities and
+/// supply artist, album, title and track number only when a file has no tag.
 nonisolated enum LibraryScanner {
-    /// Takes no conversion ceiling. The scan records what each file *is*, and
-    /// whether that's out of spec is decided per-iPod at the point of use — see
-    /// `SourceFormat`. One scan therefore serves every connected device, and
-    /// changing a quality setting no longer means walking the library again.
     static func scan(root: URL) async -> MusicLibrary {
-        await Task.detached(priority: .userInitiated) {
-            await scanSync(root: root)
-        }.value
+        await Task.detached(priority: .userInitiated) { await scanFiles(root: root) }.value
     }
 
-    private static func scanSync(root: URL) async -> MusicLibrary {
-        let fm = FileManager.default
-        var artists: [LibraryArtist] = []
-        var totalTracks = 0
-
-        guard let artistDirs = try? fm.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return MusicLibrary(root: root, artists: [], totalTracks: 0, scannedAt: Date())
-        }
-
-        for artistURL in artistDirs.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
-            guard isDirectory(artistURL), !shouldSkip(artistURL) else { continue }
-            let artistName = artistURL.lastPathComponent
-
-            guard let albumDirs = try? fm.contentsOfDirectory(
-                at: artistURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-
-            var albums: [LibraryAlbum] = []
-            for albumURL in albumDirs.sorted(by: { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }) {
-                guard isDirectory(albumURL), !shouldSkip(albumURL) else { continue }
-                let (albumName, tracks) = await scanAlbum(albumURL: albumURL, artist: artistName)
-                guard !tracks.isEmpty else { continue }
-                albums.append(LibraryAlbum(
-                    artist: artistName,
-                    name: albumName,
-                    directory: albumURL,
-                    createdAt: creationDate(albumURL),
-                    tracks: tracks
-                ))
-                totalTracks += tracks.count
-            }
-
-            if !albums.isEmpty {
-                artists.append(LibraryArtist(name: artistName, albums: albums))
-            }
-        }
-
-        return MusicLibrary(root: root, artists: artists, totalTracks: totalTracks, scannedAt: Date())
-    }
-
-    private static func scanAlbum(albumURL: URL, artist: String) async -> (String, [LibraryTrack]) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(
-            at: albumURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return (albumURL.lastPathComponent, []) }
-
-        let folderName = albumURL.lastPathComponent
-        let albumName = await embeddedAlbumName(in: files) ?? folderName
-        if albumName != folderName {
-            Log.library.debug("album name from tag: \(folderName) → \(albumName)")
-        }
+    private static func scanFiles(root: URL) async -> MusicLibrary {
+        let (files, errors) = enumerate(root)
         var tracks: [LibraryTrack] = []
-        for fileURL in files {
-            let ext = fileURL.pathExtension
-            guard AudioFormat.canSync(ext) else { continue }
-
-            let baseName = fileURL.deletingPathExtension().lastPathComponent
-            let (trackNumber, title) = parseFilename(baseName)
-            let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
-
-            // The extension can't see inside the container: a 24-bit/96 kHz
-            // ALAC and a 256k AAC are both `.m4a`. Probe the ones that could
-            // plausibly be out of spec, and reuse that single read for the
-            // duration below rather than opening the file twice.
-            let probe = AudioFormat.shouldProbe(ext) ? AudioProbe.read(fileURL) : nil
-            var format = AudioFormat.sourceFormat(ext: ext, probe: probe)
-
-            // FLAC and friends have no CoreAudio probe, so their rate, depth and
-            // length come from the container header instead — one open() per
-            // file, and only for files that convert at every ceiling anyway.
-            // Natives that pass `alwaysConverts` were already covered by `probe`.
-            if format.alwaysConverts, probe == nil {
-                let flac = FLACHeader.streamInfo(of: fileURL)
-                format.sampleRate = flac.sampleRate
-                format.bitDepth = flac.bitDepth
-                format.durationMS = flac.durationMS
+        // Bound simultaneously open AVAssets. Sorting below makes results deterministic.
+        for offset in stride(from: 0, to: files.count, by: 8) {
+            let batch = Array(files[offset..<min(offset + 8, files.count)])
+            let results = await withTaskGroup(of: LibraryTrack.self) { group in
+                for url in batch { group.addTask { await readTrack(url) } }
+                var out: [LibraryTrack] = []
+                for await track in group { out.append(track) }
+                return out
             }
-
-            // Logged at the strictest rung, which is the superset: anything that
-            // converts under any ceiling converts under this one.
-            if let probe, format.needsConversion(under: .aac44) {
-                Log.library.debug("out of spec at 44.1 kHz AAC: \(fileURL.lastPathComponent) — \(probe.summary)")
-            }
-
-            tracks.append(LibraryTrack(
-                id: fileURL,
-                artist: artist,
-                album: albumName,
-                trackNumber: trackNumber,
-                title: title,
-                fileExtension: ext.lowercased(),
-                sizeBytes: size,
-                format: format
-            ))
+            tracks.append(contentsOf: results)
         }
-        // Sort: by track number ascending (with 0/no-number after), then by name.
-        tracks.sort { lhs, rhs in
-            switch (lhs.trackNumber, rhs.trackNumber) {
-            case (0, 0): return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            case (0, _): return false
-            case (_, 0): return true
-            default:
-                if lhs.trackNumber != rhs.trackNumber { return lhs.trackNumber < rhs.trackNumber }
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
+        let groups = Dictionary(grouping: tracks) { track in
+            (track.tags["albumArtist"] ?? track.artist) + "\u{0}" + track.album
         }
-        return (albumName, tracks)
+        var albumsByArtist: [String: [LibraryAlbum]] = [:]
+        for members in groups.values {
+            let sorted = members.sorted {
+                if $0.discNumber != $1.discNumber { return $0.discNumber < $1.discNumber }
+                if $0.trackNumber != $1.trackNumber { return $0.trackNumber < $1.trackNumber }
+                return $0.url.path < $1.url.path
+            }
+            guard let first = sorted.first else { continue }
+            let artist = first.tags["albumArtist"] ?? first.artist
+            let directory = first.url.deletingLastPathComponent()
+            let date = (try? directory.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            albumsByArtist[artist, default: []].append(LibraryAlbum(
+                artist: artist, name: first.album, directory: directory, createdAt: date, tracks: sorted))
+        }
+        let artists = albumsByArtist.keys.sorted().map { name in
+            LibraryArtist(name: name, albums: albumsByArtist[name]!.sorted { $0.name < $1.name })
+        }
+        return MusicLibrary(root: root, artists: artists, totalTracks: tracks.count,
+                            scannedAt: Date(), scanErrors: errors)
     }
 
-    /// Sample the first two playable files in filename order. Their album tags
-    /// must agree before one name replaces the folder name; a missing or
-    /// conflicting tag falls back to the folder. Single-track albums need only
-    /// their one tag. This avoids opening every file during a library scan.
-    private static func embeddedAlbumName(in files: [URL]) async -> String? {
-        let sample = files.filter { AudioFormat.canSync($0.pathExtension) }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .prefix(2)
-        guard let first = sample.first,
-              let name = await AudioMetadataReader.albumName(first) else { return nil }
-        if sample.count == 2 {
-            guard let second = await AudioMetadataReader.albumName(sample[sample.index(after: sample.startIndex)]),
-                  name.precomposedStringWithCanonicalMapping == second.precomposedStringWithCanonicalMapping else {
-                return nil
+    private static func enumerate(_ root: URL) -> ([URL], [String]) {
+        let fm = FileManager.default
+        var errors: [String] = []
+        var files: [URL] = []
+        if let walker = fm.enumerator(at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles], errorHandler: { url, error in
+                errors.append("\(url.path): \(error.localizedDescription)")
+                return true
+            }) {
+            for case let url as URL in walker {
+                if url.lastPathComponent.caseInsensitiveCompare("Playlists") == .orderedSame {
+                    walker.skipDescendants()
+                    continue
+                }
+                do {
+                    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                    if values.isSymbolicLink == true { walker.skipDescendants(); continue }
+                    if values.isRegularFile == true, AudioFormat.canSync(url.pathExtension) { files.append(url) }
+                } catch { errors.append("\(url.path): \(error.localizedDescription)") }
             }
+        } else { errors.append("Cannot enumerate library: \(root.path)") }
+        return (files, errors)
+    }
+
+    static func readTrack(_ url: URL) async -> LibraryTrack {
+        let tags = await TagReader.read(url)
+        let folder = url.deletingLastPathComponent()
+        let (number, title) = parseFilename(url.deletingPathExtension().lastPathComponent)
+        let ext = url.pathExtension
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
+        let probe = AudioFormat.shouldProbe(ext) ? AudioProbe.read(url) : nil
+        var format = AudioFormat.sourceFormat(ext: ext, probe: probe)
+        if format.alwaysConverts, probe == nil {
+            let flac = FLACHeader.streamInfo(of: url)
+            format.sampleRate = flac.sampleRate
+            format.bitDepth = flac.bitDepth
+            format.durationMS = flac.durationMS
         }
-        return name
+        return LibraryTrack(id: url, artist: tags["artist"] ?? folder.deletingLastPathComponent().lastPathComponent,
+            album: tags["album"] ?? folder.lastPathComponent,
+            trackNumber: tags["trackNumber"].flatMap(Int.init) ?? number,
+            title: tags["title"] ?? title, fileExtension: ext.lowercased(), sizeBytes: size,
+            format: format, tags: tags)
     }
 
     /// Mirrors the regex from ipod-sync.c:
@@ -181,16 +118,4 @@ nonisolated enum LibraryScanner {
         return (n, title.isEmpty ? base : title)
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
-
-    private static func creationDate(_ url: URL) -> Date {
-        (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-    }
-
-    private static func shouldSkip(_ url: URL) -> Bool {
-        let n = url.lastPathComponent
-        return n.hasPrefix(".") || n.caseInsensitiveCompare("Playlists") == .orderedSame
-    }
 }

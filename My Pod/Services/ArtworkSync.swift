@@ -211,27 +211,27 @@ enum ArtworkSync {
         }
     }
 
-    /// Attach `update`'s cover to every one of its tracks. Returns true if any
-    /// track took it — the caller still has to `save()`.
+    /// Attach `update`'s cover to every track. Report success only when every
+    /// track took it; the caller still has to `save()`.
     ///
     /// Failures are logged and swallowed per track: a single unreadable image or
     /// a track that vanished between plan and execute is not a reason to abandon
     /// a sync that has already mutated the database.
     static func apply(_ update: ArtworkUpdate, to device: IPodDevice) async -> Bool {
-        var applied = false
+        var applied = 0
         Log.artwork.debug(
             "applying \(update.coverURL.lastPathComponent) to \(update.trackIDs.count) track(s) of \(update.artist) — \(update.album)"
         )
         for trackID in update.trackIDs {
             do {
                 try await device.setTrackArtwork(trackID: trackID, imagePath: update.coverURL.path)
-                applied = true
+                applied += 1
             } catch {
                 Log.artwork.warning(
                     "artwork failed for \(update.artist) — \(update.album) (track \(trackID)): \(error.localizedDescription)"
                 )
             }
         }
-        return applied
+        return !update.trackIDs.isEmpty && applied == update.trackIDs.count
     }
 }

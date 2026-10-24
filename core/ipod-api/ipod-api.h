@@ -63,8 +63,34 @@ typedef struct {
     int supports_artwork;   /* 1 if choosing this model gets the user artwork */
 } IPodModelOption;
 
+/* Metadata shared by the Swift reader and libgpod. Owned strings in snapshots. */
+typedef struct {
+    const char *title;
+    const char *artist;
+    const char *album;
+    const char *genre;
+    const char *albumArtist;
+    const char *composer;
+    const char *grouping;
+    const char *comment;
+    const char *sortTitle;
+    const char *sortArtist;
+    const char *sortAlbum;
+    const char *sortAlbumArtist;
+    const char *sortComposer;
+    int trackNumber;
+    int trackTotal;
+    int discNumber;
+    int discTotal;
+    int year;
+    int bpm;
+    int compilation;
+    int hasLyrics;
+} IPodTagMetadata;
+
 /* Track information */
 typedef struct {
+    IPodTagMetadata tags;
     uint32_t id;            /* Unique track ID */
     char *title;            /* Track title */
     char *artist;           /* Artist name */
@@ -92,6 +118,10 @@ typedef struct {
     int track_count;        /* Number of track entries */
     uint32_t *track_ids;    /* track_count entries, in playlist order (NULL when empty) */
 } IPodPlaylistInfo;
+
+/* Replace imported metadata only; playback history, ratings and artwork stay intact.
+ * Use an index for newly added tracks, whose IDs are assigned only at save. */
+IPodResult ipod_set_track_tags(IPodDB *db, int index, const IPodTagMetadata *tags);
 
 /* Sync statistics */
 typedef struct {

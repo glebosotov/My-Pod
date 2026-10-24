@@ -81,6 +81,7 @@ struct SyncSheetView: View {
 
                 summaryRow("Add", count: plan.toAddCount, bytes: plan.addedBytes, color: .accentColor)
                 summaryRow("Remove", count: plan.toRemoveCount, bytes: plan.removedBytes, color: .red)
+                summaryRow("Update tags", count: plan.metadataUpdates.count, color: .orange)
                 summaryRow("Unchanged", count: plan.unchangedCount, color: .secondary)
                 summaryRow("Convert (→\(engine.conversionService.ceiling.codec == .alac ? "ALAC" : "AAC"))", count: plan.pendingConversion.count, color: .orange)
                 // Normally zero, so it appears only when there's something to
@@ -409,6 +410,7 @@ struct SyncSheetView: View {
         switch phase {
         case .converting: "Converting tracks…"
         case .removing: "Removing tracks…"
+        case .metadata: "Updating music tags…"
         case .adding: "Copying tracks to iPod…"
         case .artwork: "Updating cover art…"
         case .playlists: "Writing playlists…"

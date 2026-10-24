@@ -294,7 +294,8 @@ final class ManualTransferStore {
                         bitrate: props.bitrate,
                         sampleRate: props.sampleRate,
                         filetype: props.filetypeString,
-                        artworkPath: artwork?.path
+                        artworkPath: artwork?.path,
+                        tags: track.importedTags
                     )
                     existingKeys.insert(TrackKey(library: track))
                     outcome.added += 1
@@ -445,60 +446,7 @@ nonisolated enum ManualTrackLoader {
     }
 
     private static func makeTrack(_ url: URL) async -> LibraryTrack? {
-        let ext = url.pathExtension.lowercased()
-        guard AudioFormat.canSync(ext) else { return nil }
-
-        let fallbackBase = url.deletingPathExtension().lastPathComponent
-        let (fallbackNumber, fallbackTitle) = LibraryScanner.parseFilename(fallbackBase)
-        let fallbackAlbum = url.deletingLastPathComponent().lastPathComponent
-        let fallbackArtist = url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
-
-        let common = await commonMetadata(url)
-        let title = clean(common.title) ?? fallbackTitle
-        let artist = clean(common.artist) ?? clean(fallbackArtist) ?? "Unknown Artist"
-        let album = clean(common.album) ?? clean(fallbackAlbum) ?? "Unknown Album"
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
-        let probe = AudioFormat.shouldProbe(ext) ? AudioProbe.read(url) : nil
-        var format = AudioFormat.sourceFormat(ext: ext, probe: probe)
-
-        if format.alwaysConverts, probe == nil {
-            let source = FLACHeader.streamInfo(of: url)
-            format.sampleRate = source.sampleRate
-            format.bitDepth = source.bitDepth
-            format.durationMS = source.durationMS
-        }
-
-        return LibraryTrack(
-            id: url,
-            artist: artist,
-            album: album,
-            trackNumber: fallbackNumber,
-            title: title,
-            fileExtension: ext,
-            sizeBytes: size,
-            format: format
-        )
-    }
-
-    private static func commonMetadata(_ url: URL) async -> (title: String?, artist: String?, album: String?) {
-        let asset = AVURLAsset(url: url)
-        guard let items = try? await asset.load(.commonMetadata) else { return (nil, nil, nil) }
-
-        func value(for key: AVMetadataKey) async -> String? {
-            guard let item = items.first(where: { $0.commonKey == key }) else { return nil }
-            return try? await item.load(.stringValue)
-        }
-
-        return (
-            await value(for: .commonKeyTitle),
-            await value(for: .commonKeyArtist),
-            await value(for: .commonKeyAlbumName)
-        )
-    }
-
-    private static func clean(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard AudioFormat.canSync(url.pathExtension) else { return nil }
+        return await LibraryScanner.readTrack(url)
     }
 }
