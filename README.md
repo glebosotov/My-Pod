@@ -66,6 +66,21 @@ resolution and preservation of ratings/play counts. The optional mounted-volume 
 after a normal build. It checks the actual CLI and eject using a disposable HFS+
 disk image. Tests do not establish playback or eject behavior on physical hardware.
 
+## Release bundles
+
+`nix build .#bundle` builds the source CLI and creates a relocatable, ad-hoc-signed
+archive. `nix build .#release-sources` collects corresponding source archives,
+patches and build recipes for the CLI and bundled libraries. Both outputs are
+reproducible release artifacts; never replace an asset after publication.
+
+Run **Build CLI release bundles** manually from the intended source commit. It
+builds both architectures on native macOS runners and exercises Unicode metadata,
+JPEG artwork, sync and eject with access to `/nix` denied. Its artifacts include
+the source revision and checksums. Update the pinned bundle hashes only after
+both jobs pass, then publish the binaries and corresponding-source archive as a
+GitHub Release on the commit containing those hashes. The bundles record their
+build revision so the corresponding source remains unambiguous.
+
 ## Features
 
 - **Automatic device detection** — the iPod is picked up as soon as it mounts; no pairing or setup.

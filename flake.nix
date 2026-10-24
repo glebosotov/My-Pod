@@ -12,7 +12,24 @@
         mypod = pkgs.callPackage ./nix/package.nix {
           src = self;
         };
-      in { inherit mypod; default = mypod; });
+        sources = import ./nix/release-sources.nix { inherit pkgs; };
+        bundle = import ./nix/bundle.nix {
+          inherit pkgs sources system;
+          src = self;
+          package = mypod;
+          revision = self.rev or (self.dirtyRev or "uncommitted");
+        };
+        release-sources = pkgs.runCommand "mypod-${mypod.version}-sources" {
+          nativeBuildInputs = [ pkgs.python3 pkgs.gnutar pkgs.gzip ];
+        } ''
+          python ${self}/Scripts/archive-sources.py --source ${self} \
+            --manifest ${sources} --output "$TMPDIR/mypod-${mypod.version}-sources"
+          mkdir -p "$out"
+          tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
+            -C "$TMPDIR" -cf - mypod-${mypod.version}-sources | gzip -n \
+            > "$out/mypod-${mypod.version}-sources.tar.gz"
+        '';
+      in { inherit mypod bundle release-sources; from-source = mypod; default = mypod; });
     apps = forAllSystems (system: {
       default = { type = "app"; program = "${self.packages.${system}.mypod}/bin/mypod"; };
       mypod = self.apps.${system}.default;

@@ -1,0 +1,57 @@
+name: Build CLI release bundles
+on:
+  workflow_dispatch:
+    inputs:
+      system:
+        description: Architectures to build
+        type: choice
+        default: both
+        options: [both, aarch64-darwin, x86_64-darwin]
+permissions:
+  contents: read
+jobs:
+  bundle:
+    name: ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.system == 'both' && '[{"system":"aarch64-darwin","runner":"macos-15"},{"system":"x86_64-darwin","runner":"macos-15-intel"}]' || inputs.system == 'aarch64-darwin' && '[{"system":"aarch64-darwin","runner":"macos-15"}]' || '[{"system":"x86_64-darwin","runner":"macos-15-intel"}]') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
+      - name: Build relocatable bundle
+        run: |
+          nix build .#bundle -o result-bundle -L
+          mkdir -p dist unpacked
+          cp result-bundle/*.tar.gz dist/
+          tar -xzf dist/*.tar.gz -C unpacked
+          bundle=$(find "$PWD/unpacked" -mindepth 1 -maxdepth 1 -type d)
+          /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny file-read* (subpath "/nix"))' "$bundle/bin/mypod" help
+          printf '%s\n' "$bundle" > bundle-path
+      - name: Verify sync and eject without access to Nix
+        run: |
+          bundle=$(cat bundle-path)
+          nix develop --command ./Scripts/build-libgpod.sh
+          MYPOD_CLI="$bundle/bin/mypod" MYPOD_NO_NIX=1 nix develop --command ./Tests/cli-integration.sh
+      - name: Corresponding sources
+        if: matrix.system == 'aarch64-darwin'
+        run: |
+          git diff --exit-code
+          nix build .#release-sources -o result-sources -L
+          cp result-sources/*.tar.gz dist/
+      - name: Record checksums
+        run: |
+          cd dist
+          shasum -a 256 *.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_REVISION
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mypod-${{ matrix.system }}
+          path: dist/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

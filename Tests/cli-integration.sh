@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cli="${MYPOD_CLI:-$PWD/build/Build/Products/Release/mypod}"
+run_cli() {
+  if [ "${MYPOD_NO_NIX:-0}" = 1 ]; then
+    /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny file-read* (subpath "/nix"))' "$cli" "$@"
+  else
+    "$cli" "$@"
+  fi
+}
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mypod-cli.XXXXXXXX")
 scratch=$(cd "$scratch" && pwd -P)
 attached=false
@@ -28,15 +35,21 @@ attached=true
 "$scratch/device-fixture" "$scratch/device"
 args=(--library "$scratch/library" --device "$scratch/device" --quality aac48 --cache "$scratch/cache")
 before=$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")
-"$cli" plan "${args[@]}" > "$scratch/plan.json"
+run_cli plan "${args[@]}" > "$scratch/plan.json"
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
 id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deviceID"])' "$scratch/plan.json")
-if "$cli" sync "${args[@]}" --device-id definitely-wrong; then
+if run_cli sync "${args[@]}" --device-id definitely-wrong; then
   echo 'Wrong device ID was accepted' >&2; exit 1
 fi
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
-"$cli" sync "${args[@]}" --device-id "$id" > "$scratch/sync.json"
-"$cli" plan "${args[@]}" > "$scratch/repeat.json"
+run_cli sync "${args[@]}" --device-id "$id" > "$scratch/sync.json"
+run_cli plan "${args[@]}" > "$scratch/repeat.json"
+python3 - "$scratch/device" <<'PYTEST'
+from pathlib import Path
+import sys
+art = list((Path(sys.argv[1]) / 'iPod_Control/Artwork').glob('*.ithmb'))
+assert art and all(p.stat().st_size > 0 for p in art), 'Artwork must render without Nix loader data'
+PYTEST
 python3 - "$scratch/sync.json" "$scratch/repeat.json" <<'PY'
 import json, sys
 result, plan = (json.load(open(p)) for p in sys.argv[1:])
@@ -47,12 +60,12 @@ PY
 mkdir -p "$scratch/broken/Artist/Album"
 printf 'invalid audio' > "$scratch/broken/Artist/Album/Broken.mp3"
 before=$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")
-if "$cli" sync --library "$scratch/broken" --device "$scratch/device" --device-id "$id" --delete --eject; then
+if run_cli sync --library "$scratch/broken" --device "$scratch/device" --device-id "$id" --delete --eject; then
   echo 'Invalid audio was accepted' >&2; exit 1
 fi
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
 mount | rg -F " on $scratch/device (" >/dev/null
-"$cli" sync "${args[@]}" --device-id "$id" --eject > "$scratch/eject.json"
+run_cli sync "${args[@]}" --device-id "$id" --eject > "$scratch/eject.json"
 python3 - "$scratch/eject.json" <<'PY'
 import json, sys
 assert json.load(open(sys.argv[1]))['ejected'] is True

@@ -128,3 +128,8 @@ Vendor/intel-deps/
 
 # Local nix build output link.
 /result
+
+# Reproducible release outputs.
+/result-bundle
+/result-sources
+/dist/

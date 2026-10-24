@@ -25,7 +25,7 @@ import Foundation
         try expect(all.count == 5 && library.scanErrors.isEmpty, "Recursive scanner must find five fixtures")
         let tagged = all.filter { $0.tags["genre"] != nil }
         try expect(tagged.count == 4, "Read MP3, M4A and FLAC genres")
-        try expect(tagged.allSatisfy { $0.artist == "Tagged Artist" && $0.album == "Tagged Album" && $0.title == "Tagged Title" }, "Embedded identities override misleading paths")
+        try expect(tagged.allSatisfy { $0.artist == "Tagged Artist" && $0.album == "Tagged Album" && $0.title == "Tagged Title 日本語 Ü" }, "Embedded identities override misleading paths")
         try expect(tagged.allSatisfy { $0.tags["comment"] == "Test Comment" && $0.tags["composer"] == "Test Composer"
             && $0.tags.number("bpm") == 123 && $0.tags.number("year") == 2024
             && $0.tags.number("compilation") == 1 && $0.tags["sortArtist"] == "Artist Sort" }, "Extended tags across all formats")

@@ -9,7 +9,7 @@ root = Path(sys.argv[1])
 for suffix, disc, codec in [('mp3', 1, 'libmp3lame'), ('m4a', 2, 'aac'), ('flac', 3, 'flac'), ('m4a', 4, 'aac')]:
     path = root / 'Folder Artist' / f'Folder Album {disc}' / f'09 - Wrong Title.{suffix}'
     path.parent.mkdir(parents=True, exist_ok=True)
-    metadata = dict(title='Tagged Title', artist='Tagged Artist', album='Tagged Album',
+    metadata = dict(title='Tagged Title 日本語 Ü', artist='Tagged Artist', album='Tagged Album',
                     album_artist='Various Artists', genre='Rock', date='2024-02-01',
                     track='3/12', disc=f'{disc}/3', composer='Test Composer', compilation='1',
                     sort_name='Title Sort', sort_artist='Artist Sort', sort_album='Album Sort',
@@ -44,3 +44,6 @@ subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=22
 
 subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=red:s=16x16',
                 '-frames:v', '1', str(root / 'test-cover.png')], check=True)
+
+subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=blue:s=32x32',
+                '-frames:v', '1', str(root / 'Folder Artist/Folder Album 2/cover.jpg')], check=True)
