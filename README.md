@@ -19,12 +19,14 @@ nix run github:glebosotov/My-Pod -- help
 nix run github:glebosotov/My-Pod -- devices
 ```
 
-The first run downloads the pinned Swift compiler/SDK and builds the CLI. Later
-runs reuse the Nix store result; Nix tracks its runtime dependencies automatically.
-macOS system services still provide device mounting/eject and audio conversion.
+The default package downloads a verified release bundle; no compiler or SDK is
+needed. Nix tracks the bundled runtime automatically. macOS system services still
+provide device mounting/eject and audio conversion.
 
-From a checkout, use `nix run . -- help` or `nix build .`. The native GUI development
-workflow remains available with installed Xcode:
+Use `nix run github:glebosotov/My-Pod#from-source -- help` to build the CLI with
+the pinned Swift toolchain instead. From a checkout, `nix run . -- help` and
+`nix build .` use the release bundle; `nix build .#from-source` builds source.
+The native GUI development workflow remains available with installed Xcode:
 
 ```sh
 nix develop --command ./Scripts/build-nix.sh
@@ -71,15 +73,23 @@ disk image. Tests do not establish playback or eject behavior on physical hardwa
 `nix build .#bundle` builds the source CLI and creates a relocatable, ad-hoc-signed
 archive. `nix build .#release-sources` collects corresponding source archives,
 patches and build recipes for the CLI and bundled libraries. Both outputs are
-reproducible release artifacts; never replace an asset after publication.
+reproducible release artifacts; never replace an asset after publication. To reproduce
+a published bundle, build `#bundle` at the manifest’s `sourceRevision`.
 
-Run **Build CLI release bundles** manually from the intended source commit. It
-builds both architectures on native macOS runners and exercises Unicode metadata,
-JPEG artwork, sync and eject with access to `/nix` denied. Its artifacts include
-the source revision and checksums. Update the pinned bundle hashes only after
-both jobs pass, then publish the binaries and corresponding-source archive as a
-GitHub Release on the commit containing those hashes. The bundles record their
-build revision so the corresponding source remains unambiguous.
+For a new release, bump the source package version and run the
+[release workflow](.github/workflows/cli-bundles.yml) from that source commit.
+After both jobs pass:
+
+```sh
+gh run download RUN_ID --repo glebosotov/My-Pod --dir dist
+nix develop --command python Scripts/pin-bundles.py dist --revision SOURCE_COMMIT
+```
+
+The [pinning command](Scripts/pin-bundles.py) validates the artifacts before writing
+`nix/releases.json`. Commit that manifest and tag the commit. Push the tag, publish
+the binary archives and corresponding-source archive as a GitHub Release, verify
+`nix run github:glebosotov/My-Pod/VERSION -- help`, then push the main branch.
+This keeps the default branch's download URLs valid throughout publication.
 
 ## Features
 

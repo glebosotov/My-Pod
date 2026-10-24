@@ -5,7 +5,7 @@ in stdenvNoCC.mkDerivation {
   pname = "mypod";
   inherit (release) version;
   src = fetchurl {
-    url = "https://github.com/glebosotov/My-Pod/releases/download/v${release.version}/${bundle.file}";
+    url = bundle.url;
     hash = bundle.hash;
   };
   dontConfigure = true;

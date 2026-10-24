@@ -1,0 +1,26 @@
+{
+  "version": "1.9.1",
+  "sourceRevision": "ade2b3d8faf03df1e38e619cfca83b3904a1c0c9",
+  "bundles": {
+    "aarch64-darwin": {
+      "file": "mypod-1.9.1-aarch64-darwin.tar.gz",
+      "hash": "sha256-YwJ5/YBuHbfy1y7zc+SXAojDr//9s5byKJHqSmbQdD4=",
+      "bytes": 4728535,
+      "url": "https://github.com/glebosotov/My-Pod/releases/download/v1.9.1/mypod-1.9.1-aarch64-darwin.tar.gz",
+      "unpackedHash": "sha256-5DIhSZFXIAgYtzyTlcmJwUxTj4gUf4OWhNnbVU8zHfw="
+    },
+    "x86_64-darwin": {
+      "file": "mypod-1.9.1-x86_64-darwin.tar.gz",
+      "hash": "sha256-VhS6wrkqbgdfhxV4cpNBg4o7plrA7uWIlDSPnctKuZs=",
+      "bytes": 5075206,
+      "url": "https://github.com/glebosotov/My-Pod/releases/download/v1.9.1/mypod-1.9.1-x86_64-darwin.tar.gz",
+      "unpackedHash": "sha256-R6mUeEUGqpVvyns4bh6wz8JYEAH0tPO1i9IBeqtemUE="
+    }
+  },
+  "sources": {
+    "file": "mypod-1.9.1-sources.tar.gz",
+    "hash": "sha256-5cA/tXkKxm0J9XP7Df2g0q96jxTxt8BhVYg44eNu0fk=",
+    "bytes": 69930862,
+    "url": "https://github.com/glebosotov/My-Pod/releases/download/v1.9.1/mypod-1.9.1-sources.tar.gz"
+  }
+}

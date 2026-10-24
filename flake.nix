@@ -4,36 +4,42 @@
   outputs = { self, nixpkgs }:
   let
     systems = [ "aarch64-darwin" "x86_64-darwin" ];
-    forAllSystems = nixpkgs.lib.genAttrs systems;
+    forAllSystems = f: builtins.listToAttrs (builtins.map (system: { name = system; value = f system; }) systems);
+    release = builtins.fromJSON (builtins.readFile ./nix/releases.json);
   in {
     packages = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        mypod = pkgs.callPackage ./nix/package.nix {
-          src = self;
-        };
+        fromSource = pkgs.callPackage ./nix/package.nix { src = self; };
+        mypod = pkgs.callPackage ./nix/prebuilt.nix { inherit release system; };
         sources = import ./nix/release-sources.nix { inherit pkgs; };
         bundle = import ./nix/bundle.nix {
           inherit pkgs sources system;
           src = self;
-          package = mypod;
+          package = fromSource;
           revision = self.rev or (self.dirtyRev or "uncommitted");
         };
-        release-sources = pkgs.runCommand "mypod-${mypod.version}-sources" {
+        release-sources = pkgs.runCommand "mypod-${fromSource.version}-sources" {
           nativeBuildInputs = [ pkgs.python3 pkgs.gnutar pkgs.gzip ];
         } ''
           python ${self}/Scripts/archive-sources.py --source ${self} \
-            --manifest ${sources} --output "$TMPDIR/mypod-${mypod.version}-sources"
+            --manifest ${sources} --output "$TMPDIR/mypod-${fromSource.version}-sources"
           mkdir -p "$out"
           tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
-            -C "$TMPDIR" -cf - mypod-${mypod.version}-sources | gzip -n \
-            > "$out/mypod-${mypod.version}-sources.tar.gz"
+            -C "$TMPDIR" -cf - mypod-${fromSource.version}-sources | gzip -n \
+            > "$out/mypod-${fromSource.version}-sources.tar.gz"
         '';
-      in { inherit mypod bundle release-sources; from-source = mypod; default = mypod; });
-    apps = forAllSystems (system: {
-      default = { type = "app"; program = "${self.packages.${system}.mypod}/bin/mypod"; };
-      mypod = self.apps.${system}.default;
-    });
+      in { inherit mypod bundle release-sources; from-source = fromSource; default = mypod; });
+    apps = forAllSystems (system:
+      let
+        bundle = release.bundles.${system};
+        # Fetch directly: running a release needs neither a compiler nor a build shell.
+        binary = builtins.fetchTarball { url = bundle.url; sha256 = bundle.unpackedHash; };
+      in {
+        default = { type = "app"; program = "${binary}/bin/mypod"; };
+        mypod = self.apps.${system}.default;
+        from-source = { type = "app"; program = "${self.packages.${system}.from-source}/bin/mypod"; };
+      });
     checks = forAllSystems (system: { cli = self.packages.${system}.mypod; });
     devShells = nixpkgs.lib.genAttrs [ "aarch64-darwin" "x86_64-darwin" ] (system:
       let pkgs = import nixpkgs { inherit system; }; in {
