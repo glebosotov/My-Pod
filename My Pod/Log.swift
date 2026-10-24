@@ -30,8 +30,10 @@ struct LogEntry: Identifiable, Sendable {
 /// Process-wide log buffer. UI observes via @Observable; mutations happen on
 /// the main actor. Capped at `cap` entries — when full we drop the oldest
 /// chunk so the head/tail semantics stay simple.
-@MainActor
+#if !MYPOD_CLI
 @Observable
+#endif
+@MainActor
 final class LogStore {
     static let shared = LogStore()
 

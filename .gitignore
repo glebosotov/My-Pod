@@ -126,5 +126,5 @@ core/libgpod/po/stamp-it
 Vendor/libgpod-arch/
 Vendor/intel-deps/
 
-# Pin the local Nix build/runtime shell while its products are in use.
-/.nix-profile*
+# Local nix build output link.
+/result

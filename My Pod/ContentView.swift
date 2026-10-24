@@ -156,6 +156,7 @@ struct ContentView: View {
             Log.ui.warning("sync clicked but cannot sync (status=\(controller.status), root=\(libraryStore.libraryRoot != nil))")
             return
         }
+        let profile = DeviceProfileStore.shared.active
         Log.ui.info("user clicked Sync")
         showSyncSheet = true
         Task {
@@ -166,7 +167,11 @@ struct ContentView: View {
                 playlists: playlistsToSync,
                 device: device,
                 ceiling: libraryStore.ceiling,
-                freeBytes: controller.storage.free
+                freeBytes: controller.storage.free,
+                manageManually: profile.manageManually,
+                cacheLocation: .current,
+                artworkQueued: ArtworkSync.queued(for: profile),
+                artworkSince: ArtworkSync.baseline(for: profile)
             )
         }
     }
@@ -186,13 +191,18 @@ struct ContentView: View {
         guard case let .planned(plan) = syncEngine.state,
               let root = libraryStore.libraryRoot,
               let device = controller.device else { return }
+        let profile = DeviceProfileStore.shared.active
         Log.ui.info("user confirmed Sync")
         Task {
             await syncEngine.execute(
                 plan: plan,
                 libraryRoot: root,
                 playlists: playlistsToSync,
-                device: device
+                device: device,
+                onSuccessfulSave: {
+                    ArtworkSync.markSynced(profile)
+                    ArtworkSync.clearQueue(for: profile)
+                }
             )
             // Refresh device info + storage so the bottom bar reflects the new totals.
             controller.refresh()

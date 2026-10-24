@@ -11,18 +11,29 @@ Apple removed iPod support from macOS years ago. My Pod puts a modern SwiftUI in
 
 ## CLI and local verification
 
-Build with installed Xcode and pinned Nix dependencies:
+Run the CLI on Apple Silicon or Intel macOS with Nix. No checkout, Xcode,
+Homebrew installation or local profile is required:
 
 ```sh
-nix develop --profile .nix-profile --command ./Scripts/build-nix.sh
+nix run github:glebosotov/My-Pod -- help
+nix run github:glebosotov/My-Pod -- devices
+```
+
+The first run downloads the pinned Swift compiler/SDK and builds the CLI. Later
+runs reuse the Nix store result; Nix tracks its runtime dependencies automatically.
+macOS system services still provide device mounting/eject and audio conversion.
+
+From a checkout, use `nix run . -- help` or `nix build .`. The native GUI development
+workflow remains available with installed Xcode:
+
+```sh
+nix develop --command ./Scripts/build-nix.sh
 nix develop --command ./Scripts/test.sh
-build/Build/Products/Release/mypod help
 ```
 
 Set `MYPOD_DEVELOPER_DIR` when Xcode is outside `/Applications/Xcode.app/Contents/Developer`.
-The build produces the GUI app and a `mypod` symlink beside it; keep both together.
-The `.nix-profile` link keeps the runtime libraries available for this local build;
-retain it while using the build.
+The Xcode build produces the GUI app and a local `mypod` symlink beside it. Use the
+Nix package for the CLI; the local Xcode build is for GUI development.
 
 ```sh
 mypod devices
@@ -32,7 +43,8 @@ mypod sync --library "$HOME/Music/SoulSync/Library" --device /Volumes/IPOD \
   --device-id ID_FROM_DEVICES --quality aac48 --eject
 ```
 
-Use the built executable's full path or put its directory on `PATH`. CLI output is JSON;
+In the examples above, replace `mypod` with `nix run github:glebosotov/My-Pod --`,
+or use `nix shell github:glebosotov/My-Pod` to put it on `PATH`. CLI output is JSON;
 logs go to stderr. Sync is additive unless `--delete` explicitly enables mirroring.
 `--playlists /absolute/directory` replaces all user playlists with that directory's
 M3Us; omitting it preserves device playlists. Preview the same options with `plan`.

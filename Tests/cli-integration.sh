@@ -3,7 +3,7 @@
 # Uses only a disposable HFS+ image, never an attached physical iPod.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-cli="$PWD/build/Build/Products/Release/mypod"
+cli="${MYPOD_CLI:-$PWD/build/Build/Products/Release/mypod}"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mypod-cli.XXXXXXXX")
 scratch=$(cd "$scratch" && pwd -P)
 attached=false

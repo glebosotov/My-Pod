@@ -1,8 +1,12 @@
 import Foundation
+#if !MYPOD_CLI
 import Observation
+#endif
 
-@MainActor
+#if !MYPOD_CLI
 @Observable
+#endif
+@MainActor
 final class SyncEngine {
     private(set) var state: SyncState = .idle
 
@@ -59,7 +63,9 @@ final class SyncEngine {
         device: IPodDevice,
         ceiling: ConversionCeiling,
         freeBytes: UInt64,
-        useDeviceProfile: Bool = true,
+        manageManually: Bool = false,
+        cacheLocation: CacheLocation = .applicationSupport,
+        artworkQueued: Set<String> = [],
         allowRemoval: Bool = true,
         replacePlaylists: Bool = true,
         cacheRoot: URL? = nil,
@@ -68,14 +74,14 @@ final class SyncEngine {
         Log.sync.info("plan started: \(selectedPaths.count) selected, \(playlists.count) playlists, quality \(ceiling.rawValue)")
         state = .planning
         cancelRequested = false
-        conversionService = ConversionService(cacheLocation: useDeviceProfile ? .current : .applicationSupport, ceiling: ceiling, cacheRoot: cacheRoot)
+        conversionService = ConversionService(cacheLocation: cacheLocation, ceiling: ceiling, cacheRoot: cacheRoot)
 
         // Backstop, not the mechanism. A manually managed iPod shows no Music
         // tab and no Sync button, so this should be unreachable — but the whole
         // point of the mode is that a mirror must never run against a device
         // that owns its own contents, and "unreachable" is a property of today's
         // UI rather than of the engine.
-        guard !useDeviceProfile || !DeviceProfileStore.shared.active.manageManually else {
+        guard !manageManually else {
             Log.sync.error("refusing to plan: this iPod is managed by hand")
             state = .failed(
                 "This iPod is set to be managed by hand, so it doesn't sync with your library. "
@@ -112,8 +118,8 @@ final class SyncEngine {
             devicePlaylists: devicePlaylists,
             conversion: conversionService,
             freeBytes: freeBytes,
-            artworkQueued: useDeviceProfile ? ArtworkSync.queued(for: DeviceProfileStore.shared.active) : [],
-            artworkSyncedAt: useDeviceProfile ? ArtworkSync.baseline(for: DeviceProfileStore.shared.active) : artworkSince
+            artworkQueued: artworkQueued,
+            artworkSyncedAt: artworkSince
         )
 
         if !allowRemoval { plan.toRemove = []; plan.removedBytes = 0 }
@@ -402,7 +408,7 @@ final class SyncEngine {
         playlists: [Playlist],
         device: IPodDevice,
         replacePlaylists: Bool = true,
-        recordArtworkState: Bool = true
+        onSuccessfulSave: (() -> Void)? = nil
     ) async {
         Log.sync.info("execute started: +\(plan.toAddCount) -\(plan.toRemoveCount) convert=\(plan.pendingConversion.count)")
         cancelRequested = false
@@ -678,10 +684,9 @@ final class SyncEngine {
         // Baseline moves only here — after a save that landed. A run that
         // failed or was cancelled leaves it alone, so the same artwork is still
         // pending next time rather than being quietly written off.
-        if recordArtworkState {
-            let syncedProfile = DeviceProfileStore.shared.active
-            ArtworkSync.markSynced(syncedProfile)
-            ArtworkSync.clearQueue(for: syncedProfile)
+        if addFailed + removeFailed + playlistOutcome.failed == 0,
+           convertedFailures == 0, artworkUpdated == plan.artworkUpdates.count {
+            onSuccessfulSave?()
         }
 
         let totalOnDevice = await device.trackCount()

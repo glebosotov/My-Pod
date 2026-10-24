@@ -66,10 +66,10 @@ import Foundation
         let selected = Set(all.map { $0.url.path })
         let engine = SyncEngine()
         await engine.plan(libraryRoot: root, library: library, selectedPaths: selected, playlists: [],
-            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, useDeviceProfile: false, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
+            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
         guard case .planned(let plan) = engine.state else { throw Failed(message: "Plan failed: \(engine.state)") }
         try expect(plan.metadataUpdates.count == 1 && plan.toAdd.count == 4 && plan.toRemove.isEmpty, "Migrate legacy import in place")
-        await engine.execute(plan: plan, libraryRoot: root, playlists: [], device: device, recordArtworkState: false)
+        await engine.execute(plan: plan, libraryRoot: root, playlists: [], device: device)
         guard case .finished(let result) = engine.state else { throw Failed(message: "Sync failed: \(engine.state)") }
         try expect(result.failed == 0 && result.convertedFailures == 0 && result.totalOnDevice == 5, "Transfer and conversion succeed")
         let converted = tagged.first { $0.fileExtension == "flac" }!
@@ -84,13 +84,13 @@ import Foundation
             try expect(after.contains { $0.tags == track.importedTags }, "All metadata round trips through iTunesDB: \(track.url.path)")
         }
         await engine.plan(libraryRoot: root, library: library, selectedPaths: selected, playlists: [],
-            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, useDeviceProfile: false, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
+            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
         guard case .planned(let repeatPlan) = engine.state else { throw Failed(message: "Repeat planning failed") }
         try expect(repeatPlan.toAdd.isEmpty && repeatPlan.toRemove.isEmpty && repeatPlan.metadataUpdates.isEmpty, "Second sync is idempotent")
         var changed = library
         changed.artists[0].albums[0].tracks[0].tags["genre"] = "Changed Genre"
         await engine.plan(libraryRoot: root, library: changed, selectedPaths: selected, playlists: [],
-            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, useDeviceProfile: false, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
+            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, cacheRoot: root.deletingLastPathComponent().appendingPathComponent("cache"))
         guard case .planned(let changedPlan) = engine.state else { throw Failed(message: "Changed-tag planning failed") }
         try expect(changedPlan.metadataUpdates.count == 1 && changedPlan.toAdd.isEmpty, "Tag edits update metadata without recopying")
         var withDuplicate = library
@@ -102,7 +102,7 @@ import Foundation
         withDuplicate.artists[0].albums[0].tracks.append(alternate)
         withDuplicate.totalTracks += 1
         await engine.plan(libraryRoot: root, library: withDuplicate, selectedPaths: selected, playlists: [],
-            device: device, ceiling: .aac48, freeBytes: 1_000_000_000, useDeviceProfile: false)
+            device: device, ceiling: .aac48, freeBytes: 1_000_000_000)
         guard case .planned(let excludedPlan) = engine.state else { throw Failed(message: "Deselected duplicate must not block planning") }
         try expect(excludedPlan.playlistKeysByPath[alternateURL.path.precomposedStringWithCanonicalMapping] == TrackKey(library: mp4), "M3Us referencing excluded alternate formats retain musical identity")
         let keys = Dictionary(uniqueKeysWithValues: all.map { ($0.url.path.precomposedStringWithCanonicalMapping, TrackKey(library: $0)) })

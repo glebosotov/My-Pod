@@ -176,7 +176,7 @@ import Darwin
             let database = mountpoint.appendingPathComponent("iPod_Control/iTunes/iTunesDB")
             let modified = try FileManager.default.attributesOfItem(atPath: database.path)[.modificationDate] as? Date
             await engine.plan(libraryRoot: root, library: library, selectedPaths: paths, playlists: playlists,
-                device: device, ceiling: ceiling, freeBytes: free.uint64Value, useDeviceProfile: false,
+                device: device, ceiling: ceiling, freeBytes: free.uint64Value,
                 allowRemoval: options.flags.contains("--delete"), replacePlaylists: options.values["--playlists"] != nil,
                 cacheRoot: options.values["--cache"] != nil ? try options.path("--cache") :
                     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/MyPodCLI"),
@@ -197,7 +197,7 @@ import Darwin
                 return 0
             }
             await engine.execute(plan: plan, libraryRoot: root, playlists: playlists, device: device,
-                replacePlaylists: options.values["--playlists"] != nil, recordArtworkState: false)
+                replacePlaylists: options.values["--playlists"] != nil)
             guard case .finished(let outcome) = engine.state else {
                 if case .failed(let message) = engine.state { throw Failure(message) }
                 throw Failure("Sync did not finish")
