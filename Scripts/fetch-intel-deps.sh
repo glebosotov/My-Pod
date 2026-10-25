@@ -72,22 +72,19 @@ if [ -f "$STAMP" ]; then
     exit 0
 fi
 
-command -v python3 >/dev/null 2>&1 || fail "python3 not found (needed to read the Homebrew API)."
-
 mkdir -p "$CACHE" "$PREFIX/lib" "$PREFIX/include"
 
 # ghcr.io serves Homebrew's bottles and wants a bearer token even for anonymous
 # reads; "QQ==" is the literal placeholder Homebrew itself sends.
 fetch_bottle() {
     local formula="$1" url sha out
-    read -r url sha < <(curl -fsS "https://formulae.brew.sh/api/formula/$formula.json" | python3 -c "
-import json,sys
-files = json.load(sys.stdin)['bottle']['stable']['files']
-f = files.get('$TAG')
-if not f:
-    sys.exit('no $TAG bottle for $formula (have: %s)' % ', '.join(files))
-print(f['url'], f['sha256'])
-") || fail "Could not resolve an Intel bottle for $formula."
+    local metadata
+    metadata=$(curl -fsS "https://formulae.brew.sh/api/formula/$formula.json") \
+        || fail "Could not fetch bottle metadata for $formula."
+    url=$(printf '%s' "$metadata" | /usr/bin/plutil -extract "bottle.stable.files.$TAG.url" raw -o - -) \
+        || fail "No $TAG bottle URL for $formula."
+    sha=$(printf '%s' "$metadata" | /usr/bin/plutil -extract "bottle.stable.files.$TAG.sha256" raw -o - -) \
+        || fail "No $TAG bottle checksum for $formula."
 
     out="$CACHE/$formula.tar.gz"
     if [ ! -f "$out" ]; then

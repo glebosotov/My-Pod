@@ -1,0 +1,5 @@
+module CArchive [system] {
+    header "bridge.h"
+    link "archive"
+    export *
+}

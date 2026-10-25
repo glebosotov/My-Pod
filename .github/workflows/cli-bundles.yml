@@ -36,7 +36,7 @@ jobs:
         run: |
           bundle=$(cat bundle-path)
           nix develop --command ./Scripts/build-libgpod.sh
-          MYPOD_CLI="$bundle/bin/mypod" MYPOD_NO_NIX=1 nix develop --command ./Tests/cli-integration.sh
+          MYPOD_CLI="$bundle/bin/mypod" MYPOD_NO_NIX=1 nix develop .#tests --command ./Tests/cli-integration.sh
       - name: Corresponding sources
         if: matrix.system == 'aarch64-darwin'
         run: |

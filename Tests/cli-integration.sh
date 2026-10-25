@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mounted disk-image test; run in nix develop after build-nix.sh.
+# Mounted disk-image test; run in nix develop .#tests after build-nix.sh.
 # Uses only a disposable HFS+ image, never an attached physical iPod.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,7 +23,10 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$scratch/device" "$scratch/library"
-python3 Tests/make-fixtures.py "$scratch/library"
+export DEVELOPER_DIR="${MYPOD_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+export SDKROOT="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
+/usr/bin/xcrun swiftc Tests/FixtureTool.swift -o "$scratch/fixture-tool"
+"$scratch/fixture-tool" generate "$scratch/library"
 hdiutil create -quiet -size 64m -fs HFS+ -volname MyPodCLITest "$scratch/ipod.dmg"
 hdiutil attach -quiet -nobrowse -mountpoint "$scratch/device" "$scratch/ipod.dmg"
 attached=true
@@ -37,25 +40,14 @@ args=(--library "$scratch/library" --device "$scratch/device" --quality aac48 --
 before=$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")
 run_cli plan "${args[@]}" > "$scratch/plan.json"
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
-id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["deviceID"])' "$scratch/plan.json")
+id=$(/usr/bin/plutil -extract deviceID raw -o - "$scratch/plan.json")
 if run_cli sync "${args[@]}" --device-id definitely-wrong; then
   echo 'Wrong device ID was accepted' >&2; exit 1
 fi
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
 run_cli sync "${args[@]}" --device-id "$id" > "$scratch/sync.json"
 run_cli plan "${args[@]}" > "$scratch/repeat.json"
-python3 - "$scratch/device" <<'PYTEST'
-from pathlib import Path
-import sys
-art = list((Path(sys.argv[1]) / 'iPod_Control/Artwork').glob('*.ithmb'))
-assert art and all(p.stat().st_size > 0 for p in art), 'Artwork must render without Nix loader data'
-PYTEST
-python3 - "$scratch/sync.json" "$scratch/repeat.json" <<'PY'
-import json, sys
-result, plan = (json.load(open(p)) for p in sys.argv[1:])
-assert result['added'] == 5 and result['tracks'] == 5
-assert plan['add'] == [] and plan['remove'] == [] and plan['metadataUpdates'] == []
-PY
+"$scratch/fixture-tool" verify-sync "$scratch/sync.json" "$scratch/repeat.json" "$scratch/device"
 # A failed preflight must preserve the existing library and leave the device mounted.
 mkdir -p "$scratch/broken/Artist/Album"
 printf 'invalid audio' > "$scratch/broken/Artist/Album/Broken.mp3"
@@ -66,10 +58,7 @@ fi
 [ "$before" = "$(shasum "$scratch/device/iPod_Control/iTunes/iTunesDB")" ]
 mount | rg -F " on $scratch/device (" >/dev/null
 run_cli sync "${args[@]}" --device-id "$id" --eject > "$scratch/eject.json"
-python3 - "$scratch/eject.json" <<'PY'
-import json, sys
-assert json.load(open(sys.argv[1]))['ejected'] is True
-PY
+"$scratch/fixture-tool" verify-eject "$scratch/eject.json"
 if mount | rg -F " on $scratch/device ("; then
   echo 'Ejected volume is still mounted' >&2; exit 1
 fi

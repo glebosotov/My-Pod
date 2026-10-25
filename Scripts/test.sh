@@ -1,11 +1,14 @@
 #!/bin/bash
-# Run in the pinned shell: nix develop --command ./Scripts/test.sh
+# Run in the pinned shell: nix develop .#tests --command ./Scripts/test.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mypod-tests.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/library" "$scratch/device"
-python3 Tests/make-fixtures.py "$scratch/library"
+export DEVELOPER_DIR="${MYPOD_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+export SDKROOT="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
+/usr/bin/xcrun swiftc Tests/FixtureTool.swift -o "$scratch/fixture-tool"
+"$scratch/fixture-tool" generate "$scratch/library"
 MYPOD_SWIFT_FLAGS=-DMYPOD_TESTS MYPOD_BUILD_DIR=build-tests ./Scripts/build-nix.sh
 /usr/bin/clang -Icore/libgpod/src -Icore/ipod-api \
   $(pkg-config --cflags glib-2.0 gdk-pixbuf-2.0 libplist-2.0 libxml-2.0) \

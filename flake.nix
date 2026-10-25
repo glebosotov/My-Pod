@@ -12,24 +12,17 @@
         pkgs = import nixpkgs { inherit system; };
         fromSource = pkgs.callPackage ./nix/package.nix { src = self; };
         mypod = pkgs.callPackage ./nix/prebuilt.nix { inherit release system; };
-        sources = import ./nix/release-sources.nix { inherit pkgs; };
+        release-tool = pkgs.callPackage ./nix/release-tool.nix {};
+        sources = import ./nix/release-sources.nix { inherit pkgs; src = self; version = fromSource.version; };
         bundle = import ./nix/bundle.nix {
-          inherit pkgs sources system;
+          inherit pkgs system release-tool;
+          sources = sources.manifest;
           src = self;
           package = fromSource;
           revision = self.rev or (self.dirtyRev or "uncommitted");
         };
-        release-sources = pkgs.runCommand "mypod-${fromSource.version}-sources" {
-          nativeBuildInputs = [ pkgs.python3 pkgs.gnutar pkgs.gzip ];
-        } ''
-          python ${self}/Scripts/archive-sources.py --source ${self} \
-            --manifest ${sources} --output "$TMPDIR/mypod-${fromSource.version}-sources"
-          mkdir -p "$out"
-          tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner \
-            -C "$TMPDIR" -cf - mypod-${fromSource.version}-sources | gzip -n \
-            > "$out/mypod-${fromSource.version}-sources.tar.gz"
-        '';
-      in { inherit mypod bundle release-sources; from-source = fromSource; default = mypod; });
+        release-sources = sources.archive;
+      in { inherit mypod bundle release-sources release-tool; from-source = fromSource; default = mypod; });
     apps = forAllSystems (system:
       let
         bundle = release.bundles.${system};
@@ -38,19 +31,27 @@
       in {
         default = { type = "app"; program = "${binary}/bin/mypod"; };
         mypod = self.apps.${system}.default;
+        release-tool = { type = "app"; program = "${self.packages.${system}.release-tool}/bin/mypod-release-tool"; };
         from-source = { type = "app"; program = "${self.packages.${system}.from-source}/bin/mypod"; };
       });
     checks = forAllSystems (system: { cli = self.packages.${system}.mypod; });
     devShells = nixpkgs.lib.genAttrs [ "aarch64-darwin" "x86_64-darwin" ] (system:
-      let pkgs = import nixpkgs { inherit system; }; in {
-        default = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [ pkg-config autoconf automake libtool gtk-doc intltool ripgrep ffmpeg (python3.withPackages (p: [ p.mutagen ])) ];
+      let
+        pkgs = import nixpkgs { inherit system; };
+        buildShell = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [ pkg-config autoconf automake libtool gtk-doc intltool ];
           buildInputs = with pkgs; [ glib gdk-pixbuf libplist libxml2 sqlite zlib gettext ];
           # Use Apple's SDK/compiler for the Xcode application and C bridge.
           shellHook = ''
             export CC=/usr/bin/clang
             export LIBTOOLIZE=libtoolize
           '';
+        };
+      in {
+        default = buildShell;
+        tests = pkgs.mkShell {
+          inputsFrom = [ buildShell ];
+          nativeBuildInputs = with pkgs; [ ffmpeg ripgrep ];
         };
       });
   };

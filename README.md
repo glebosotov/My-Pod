@@ -30,7 +30,8 @@ The native GUI development workflow remains available with installed Xcode:
 
 ```sh
 nix develop --command ./Scripts/build-nix.sh
-nix develop --command ./Scripts/test.sh
+nix develop .#tests --command ./Scripts/test.sh
+nix develop .#tests --command ./Tests/release-tool.sh
 ```
 
 Set `MYPOD_DEVELOPER_DIR` when Xcode is outside `/Applications/Xcode.app/Contents/Developer`.
@@ -64,7 +65,7 @@ command when the device mounts; this repository does not install an automatic tr
 
 The tests generate tagged MP3/M4A/FLAC files and a disposable libgpod database. They
 check metadata persistence, conversion, lyrics, migration, idempotence, playlist
-resolution and preservation of ratings/play counts. The optional mounted-volume integration test is `nix develop --command ./Tests/cli-integration.sh`
+resolution and preservation of ratings/play counts. The optional mounted-volume integration test is `nix develop .#tests --command ./Tests/cli-integration.sh`
 after a normal build. It checks the actual CLI and eject using a disposable HFS+
 disk image. Tests do not establish playback or eject behavior on physical hardware.
 
@@ -73,8 +74,12 @@ disk image. Tests do not establish playback or eject behavior on physical hardwa
 `nix build .#bundle` builds the source CLI and creates a relocatable, ad-hoc-signed
 archive. `nix build .#release-sources` collects corresponding source archives,
 patches and build recipes for the CLI and bundled libraries. Both outputs are
-reproducible release artifacts; never replace an asset after publication. To reproduce
-a published bundle, build `#bundle` at the manifest’s `sourceRevision`.
+reproducible release artifacts; never replace an asset after publication.
+Release tooling uses the pinned Swift compiler and libarchive; source collection is
+declarative Nix. The `tests` shell adds FFmpeg and ripgrep to the build shell;
+fixtures use Xcode Swift. First-party tooling needs no Python, though upstream
+build tools (including gtk-doc) still use it. To reproduce a published bundle,
+build `#bundle` at the manifest’s `sourceRevision`.
 
 For a new release, bump the source package version and run the
 [release workflow](.github/workflows/cli-bundles.yml) from that source commit.
@@ -82,10 +87,10 @@ After both jobs pass:
 
 ```sh
 gh run download RUN_ID --repo glebosotov/My-Pod --dir dist
-nix develop --command python Scripts/pin-bundles.py dist --revision SOURCE_COMMIT
+nix run .#release-tool -- pin --artifacts dist --revision SOURCE_COMMIT
 ```
 
-The [pinning command](Scripts/pin-bundles.py) validates the artifacts before writing
+The [pinning command](Scripts/ReleaseTool.swift) validates the artifacts before writing
 `nix/releases.json`. Commit that manifest and tag the commit. Push the tag, publish
 the binary archives and corresponding-source archive as a GitHub Release, verify
 `nix run github:glebosotov/My-Pod/VERSION -- help`, then push the main branch.
@@ -290,7 +295,7 @@ Built on [libgpod](https://gitlab.gnome.org/Archive/libgpod), which does the rea
 
 This project was built with heavy use of [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant. Commits it contributed to carry a `Co-Authored-By` trailer, so the record is in the git history rather than only here.
 
-What that does and doesn't mean: the architecture, the hardware constraints the app works around, and the decision about what actually ships are human calls. There is no automated test suite in this repository — verification is done by building the app and syncing to real click-wheel iPods, and that's how every release is checked before it goes out.
+What that does and doesn't mean: the architecture, the hardware constraints the app works around, and the decision about what actually ships are human calls. The automated checks described above exercise metadata and disposable libraries; physical iPod playback still requires hardware verification.
 
 This section exists because people asked. If you're running software on hardware you care about, it's fair to know how it was made.
 

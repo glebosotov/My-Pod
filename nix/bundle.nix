@@ -1,10 +1,10 @@
-{ pkgs, src, package, sources, system, revision }:
+{ pkgs, src, package, sources, system, revision, release-tool }:
 let
   name = "mypod-${package.version}-${system}";
 in pkgs.runCommand "${name}-bundle" {
-  nativeBuildInputs = [ pkgs.python3 pkgs.darwin.cctools pkgs.darwin.sigtool pkgs.gnutar pkgs.gzip ];
+  nativeBuildInputs = [ release-tool pkgs.darwin.cctools pkgs.darwin.sigtool pkgs.gnutar pkgs.gzip ];
 } ''
-  python ${src}/Scripts/bundle-cli.py --package ${package} --source ${src} \
+  mypod-release-tool bundle --package ${package} --source ${src} \
     --sources ${sources} --version ${package.version} --system ${system} \
     --revision ${pkgs.lib.escapeShellArg revision} --output "$TMPDIR/${name}"
   "$TMPDIR/${name}/bin/mypod" help > /dev/null
